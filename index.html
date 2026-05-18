@@ -756,7 +756,10 @@ const TRANSLUCENT_FINISHES = [
 
 // Door styles that force their own order group, regardless of other lines
 // sharing the same species+finishCategory. Add more here as needed.
-const ISOLATION_DOOR_STYLES = ["Atlantis", "Aruba", "Salem"];
+// Door styles that must always get their own order, even when other lines share
+// the same species/finish/etc. Field feedback from production: these doors are
+// finicky enough that bundling them with others has caused mis-splits.
+const ISOLATION_DOOR_STYLES = ["Atlantis", "Aruba", "Nassau", "Salem"];
 
 // Door styles that require species normalization: "Rift White Oak" -> "White Oak",
 // "Rift Red Oak" -> "Oak". These styles never use the rift designation.
@@ -816,7 +819,7 @@ const DOOR_STYLE_RULES = {
   "Newcastle": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Newton": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
   "Oxford": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
-  "Oxford SRP": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
+  "Oxford SRP": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak'],
   "Salem (Slab)": ['Maple', 'White Oak', 'MDF', 'Oak'],
   "Sanford": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
   "Sedona": ['Maple'],
@@ -2993,8 +2996,9 @@ function splitOrders(lines) {
     }
     if (isSfk(l)) {
       // SFK (Sample Front Kit) follows the same splitting rules as SD plus
-      // the drawer-front-type axis. Isolation styles (Atlantis, Aruba, Salem)
-      // get their own SFK orders too.
+      // the drawer-front-type axis. Each isolation style (Atlantis, Aruba,
+      // Nassau, Salem) gets its own SFK order — they isolate from each other
+      // too, since the key prefix includes the door style name.
       const isolated = isolationSet.has(ds.toLowerCase());
       return isolated
         ? `SFK-ISO::${ds.toLowerCase()}::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}::${df}`
@@ -3002,7 +3006,9 @@ function splitOrders(lines) {
     }
     if (isSd(l) || isCb(l)) {
       // CBs never have a door style, so they can't be on the isolation path —
-      // only SD lines with Atlantis/Aruba/Salem hit the isolation key.
+      // only SD lines with an isolation style (Atlantis, Aruba, Nassau, Salem)
+      // hit the isolation key. Each isolation style gets its own order because
+      // the key prefix includes the lowercased door style.
       const isolated = isSd(l) && isolationSet.has(ds.toLowerCase());
       return isolated
         ? `SD-ISO::${ds.toLowerCase()}::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}`
@@ -3225,6 +3231,14 @@ function renderSuborders(groups) {
       ? `${g.lines.length} line(s) · ${totalQty} piece(s)`
       : `${allLines.length} line(s) · ${totalQty} piece(s) · ${styleCount} door style${styleCount === 1 ? '' : 's'} · ${finishCount} finish${finishCount === 1 ? '' : 'es'}`;
 
+    // Preview the per-suborder PO# so the operator sees what PO will appear
+    // on each generated PDF before downloading.
+    const basePOForPreview = (document.getElementById('hPO').value || '').trim();
+    const previewPO = computeSubOrderPO(basePOForPreview, i + 1, groups.length);
+    const poLine = basePOForPreview
+      ? `<div style="font-size:11px; color:var(--muted); margin-top:2px;">PO #: <strong style="color:var(--ink);">${escapeHtml(previewPO)}</strong></div>`
+      : '';
+
     const totalLine = orderTotal > 0
       ? `<div style="font-family:'Helvetica Neue',sans-serif; font-size:14px; font-weight:700; color:var(--accent-dark); margin-top:4px;">Order Total: ${fmtMoney(orderTotal)}${unpriceableCount > 0 ? ` <span style="font-weight:400; font-size:11px; color:var(--warn);">(+ ${unpriceableCount} unpriced)</span>` : ''}</div>`
       : (unpriceableCount > 0 ? `<div style="font-size:11px; color:var(--warn); margin-top:4px;">${unpriceableCount} line(s) have unknown SKUs — verify pricing manually</div>` : '');
@@ -3236,6 +3250,7 @@ function renderSuborders(groups) {
       <div class="meta">
         <div class="key-line">${escapeHtml(headerLabel)}${tagLabel}</div>
         <div class="item-count">${detailsLine}</div>
+        ${poLine}
         ${totalLine}
       </div>
       <div>
@@ -3258,11 +3273,13 @@ document.getElementById('downloadAllBtn').addEventListener('click', () => {
   if (!state.splitGroups) return;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const basePO = (document.getElementById('hPO').value || 'order').trim();
   state.splitGroups.forEach((g, i) => {
     if (i > 0) doc.addPage();
-    renderFormIntoPdf(doc, g, i + 1, state.splitGroups.length);
+    const subOrderPO = computeSubOrderPO(basePO, i + 1, state.splitGroups.length);
+    renderFormIntoPdf(doc, g, i + 1, state.splitGroups.length, subOrderPO);
   });
-  const po = (document.getElementById('hPO').value || 'order').replace(/[^a-z0-9]/gi,'_');
+  const po = basePO.replace(/[^a-z0-9]/gi,'_');
   doc.save(`split_orders_${po}.pdf`);
 });
 
@@ -3296,19 +3313,78 @@ document.getElementById('downloadAllSeparateBtn').addEventListener('click', asyn
   }, 3000);
 });
 
+// Compute a per-suborder PO# from the base PO entered by the dealer.
+//
+// Strategy: if the base PO ends with a run of digits, INCREMENT that trailing
+// number across sub-orders so the sequence flows naturally (e.g. "ORD000001"
+// becomes "ORD000001", "ORD000002", "ORD000003", ...). If the base PO has no
+// trailing digit run (e.g. "IC050726SW"), fall back to appending "-NN" with
+// 2-digit zero-padding. In either case the final string is kept under 14 chars
+// (the form field's max length) by truncating the base if necessary.
+//
+// Examples:
+//   computeSubOrderPO("ORD000001", 1, 12)  -> "ORD000001"
+//   computeSubOrderPO("ORD000001", 5, 12)  -> "ORD000005"
+//   computeSubOrderPO("ORD000001", 12, 12) -> "ORD000012"
+//   computeSubOrderPO("IC050726SW", 1, 12) -> "IC050726SW-01"
+//   computeSubOrderPO("IC050726SW", 12, 12) -> "IC050726SW-12"
+//   computeSubOrderPO("IC050726SWXYZ", 1, 12) -> "IC050726SWX-01"  (truncated)
+//   computeSubOrderPO("", 1, 12) -> "ORDER-01"  (placeholder when no PO entered)
+function computeSubOrderPO(basePO, orderNum, totalOrders) {
+  const MAX_LEN = 14;
+  const trimmed = (basePO || '').trim();
+  if (!trimmed || trimmed.toLowerCase() === 'order') {
+    // No PO entered — use a generic placeholder so each sub-order still has
+    // something unique. Operator will likely override before sending.
+    return `ORDER-${String(orderNum).padStart(2, '0')}`;
+  }
+
+  // Look for a trailing run of digits.
+  const m = trimmed.match(/^(.*?)(\d+)$/);
+  if (m && m[2]) {
+    const prefix = m[1];
+    const startNum = parseInt(m[2], 10);
+    const newNum = startNum + (orderNum - 1);
+    // Preserve the original numeric width if possible (e.g. "ORD000001" + 11
+    // -> "ORD000012" stays 6 digits). If the incremented value overflows the
+    // original width (1 -> 12 with original width 1), let it grow naturally.
+    const originalWidth = m[2].length;
+    const newDigits = String(newNum).padStart(originalWidth, '0');
+    let result = prefix + newDigits;
+    if (result.length > MAX_LEN) {
+      // Truncate the prefix to make room for the digits.
+      const room = MAX_LEN - newDigits.length;
+      result = prefix.slice(0, Math.max(0, room)) + newDigits;
+    }
+    return result;
+  }
+
+  // Fallback: no trailing digits — append "-NN" suffix with 2-digit padding.
+  const suffix = '-' + String(orderNum).padStart(2, '0');
+  const room = MAX_LEN - suffix.length;
+  const safeBase = trimmed.length > room ? trimmed.slice(0, room) : trimmed;
+  return safeBase + suffix;
+}
+
 function generatePdfForGroup(group, orderNum, totalOrders) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
-  renderFormIntoPdf(doc, group, orderNum, totalOrders);
+  // Compute the per-suborder PO# (passed to renderer so it shows in the form
+  // body) and the same string is used in the filename so PDFs are traceable
+  // back to the specific production order they represent.
+  const basePO = (document.getElementById('hPO').value || 'order').trim();
+  const subOrderPO = computeSubOrderPO(basePO, orderNum, totalOrders);
+  renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO);
 
   // Build a clean, descriptive filename:
-  //   {PO} - {orderNum}of{totalOrders} - {type} - {characteristics}.pdf
+  //   {subOrderPO} - {orderNum}of{totalOrders} - {type} - {characteristics}.pdf
+  // The {subOrderPO} is the per-suborder sequenced PO (e.g. "ORD000003" or
+  // "IC050726SW-03") so each PDF is uniquely identified end-to-end.
   // Examples:
-  //   "Samples 4 2026 - 03of23 - SD - Maple Paint.pdf"
-  //   "Samples 4 2026 - 12of23 - SD - Atlantis Maple Paint HW Black Distress.pdf"
-  //   "Samples 4 2026 - 22of23 - Parts Paint.pdf"
-  //   "Samples 4 2026 - 23of23 - Parts.pdf"
-  const po = (document.getElementById('hPO').value || 'order').trim();
+  //   "ORD000003 - 03of23 - SD - Maple Paint.pdf"
+  //   "IC050726SW-12 - 12of23 - SD - Atlantis Maple Paint HW Black Distress.pdf"
+  //   "ORD000022 - 22of23 - Parts Paint.pdf"
+  const po = subOrderPO;
 
   // Filter out NONE / empty values so they don't appear in filenames
   const meaningful = (v) => {
@@ -3374,7 +3450,7 @@ function generatePdfForGroup(group, orderNum, totalOrders) {
    PDF GENERATION — mimic Integrity Cabinets order form layout
    ============================================================ */
 
-function renderFormIntoPdf(doc, group, orderNum, totalOrders) {
+function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
   const PAGE_W = 612; // 8.5"
   const PAGE_H = 792; // 11"
   const MARGIN = 30;
@@ -3404,9 +3480,13 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders) {
 
   y += 60;
 
-  // Header info rows: 4 columns wide, each column is a label-on-top / value-on-bottom block
+  // Header info rows: 4 columns wide, each column is a label-on-top / value-on-bottom block.
+  // The PO# shown is the per-suborder sequenced PO (e.g. "ORD000003" or
+  // "IC050726SW-03"), NOT the raw base PO the dealer entered. This makes each
+  // generated PDF uniquely traceable end-to-end in production.
+  const displayPO = subOrderPO || document.getElementById('hPO').value;
   const headerFields = [
-    ['Alpha Code / Acct', document.getElementById('hAlpha').value, 'PO #', document.getElementById('hPO').value],
+    ['Alpha Code / Acct', document.getElementById('hAlpha').value, 'PO #', displayPO],
     ['Designer', document.getElementById('hDesigner').value, 'Job Name', document.getElementById('hJob').value],
     ['Order Type', document.getElementById('hOrderType').value, 'Delivery', document.getElementById('hDelivery').value]
   ];
