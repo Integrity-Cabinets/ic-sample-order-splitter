@@ -278,6 +278,40 @@
   }
   .line-table tr.filtered { background: #f4f2ec; color: var(--muted); }
   .line-table tr.filtered td { font-style: italic; }
+  /* Lines selected for re-examination get a soft blue tint */
+  .line-table tr.selected-for-review { background: #eaf1fa; }
+  .line-table tr.selected-for-review.flagged { background: #f5e8d8; }
+  /* Lines that have been re-examined get a small badge */
+  .line-table .re-examined-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 5px;
+    background: #3a6b9a;
+    color: white;
+    border-radius: 3px;
+    margin-left: 4px;
+    font-weight: 600;
+    cursor: help;
+  }
+  /* Re-examine modal */
+  .re-exam-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .re-exam-modal.hidden { display: none; }
+  .re-exam-modal-content {
+    background: white;
+    padding: 24px;
+    border-radius: 6px;
+    max-width: 560px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
   .line-table input, .line-table select, .line-table textarea {
     width: 100%;
     border: none;
@@ -645,6 +679,7 @@
       <table class="line-table" id="lineTable">
         <thead>
           <tr>
+            <th style="width:34px" title="Select lines for re-examination"><input type="checkbox" id="selectAllLines" /></th>
             <th style="width:130px">#</th>
             <th style="width:90px">SKU *</th>
             <th style="width:55px">Qty</th>
@@ -665,10 +700,27 @@
     </div>
     <div class="small" style="margin-top:6px">* = splitting field. SD, SFK, FSFK, and Parts each go on separate orders. Within SD/SFK/FSFK, unique combos of Species + Finish category + Glaze + Finish process split. SFK and FSFK additionally split by Drawer Front type (Slab vs 5PC). Atlantis, Aruba &amp; Salem (SD/SFK) get their own orders. Parts split into three buckets: Paint Color Blocks (CBBOX, CBSET, CBSET-M, CBSET-PNT), Stain Color Blocks (CBSET-C, CBSET-H, CBSET-O, CBSET-WO, CBSET-STN), and general Parts (LIT, TKIT, etc.). CB lines ride along on matching SD/SFK orders when species + finish + glaze + finish process all match. <strong>Drag the bottom scrollbar to see all columns.</strong></div>
 
-    <div style="margin-top:20px; display:flex; gap:12px; align-items:center;">
+    <div style="margin-top:20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <button class="secondary" id="addLineBtn">+ Add Line</button>
+      <button class="secondary" id="reExamineBtn" style="display:none;" title="Re-run the AI extraction on the selected lines with extra scrutiny and your guidance notes">🔍 Re-examine Selected Lines (<span id="selectedCount">0</span>)</button>
       <button class="secondary" id="downloadReportBtn" title="Download a CSV showing every flag, fix, and approval — send this to your manager so we can refine the tool">📋 Download Review Report</button>
       <button class="primary" id="generateBtn" style="margin-left:auto">Generate Split Orders →</button>
+    </div>
+
+    <!-- Re-examine modal -->
+    <div id="reExamineModal" class="re-exam-modal hidden">
+      <div class="re-exam-modal-content">
+        <h3 style="margin-top:0;">Re-examine Selected Lines</h3>
+        <p class="small" style="color:var(--muted); margin-bottom:14px;">
+          You've selected <strong id="reExamLineCount">0</strong> line(s) for re-examination. The AI will look at these lines again with extra scrutiny, using your note below as guidance. The selected lines will stay in CHK mode after re-extraction so you can verify the new result.
+        </p>
+        <label class="small" style="display:block; margin-bottom:6px;"><strong>What's your concern?</strong> <span style="color:var(--muted)">(optional but helpful — e.g., "species and finish look swapped" or "door style might be wrong")</span></label>
+        <textarea id="reExamNote" rows="4" style="width:100%; padding:8px; font-family:inherit; font-size:13px; box-sizing:border-box;" placeholder="Describe what looks off about these lines so the AI knows what to check..."></textarea>
+        <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end;">
+          <button class="secondary" id="reExamCancel">Cancel</button>
+          <button class="primary" id="reExamSubmit">Re-examine →</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -720,7 +772,7 @@
 // Front Kits) and live in ELITE_DOOR_STYLES below.
 const DOOR_STYLES = [
   "Aruba","Atlantic Breeze","Atlantis","Ayden","Bella","Bentley","Bentley SRP",
-  "Cumberland","Fairmont","Gulfbreeze","Hathaway","Hathaway SRP",
+  "Cumberland","Easton","Fairmont","Gulfbreeze","Hathaway","Hathaway SRP",
   "Jamestown","Lenoir","Lexington","Madison","Meridian","Meridian SRP",
   "Monterey","Nassau","Newcastle","Oxford","Oxford SRP","Salem",
   "Sedona","Shreveport","Southporte"
@@ -759,7 +811,8 @@ const TRANSLUCENT_FINISHES = [
 // Door styles that must always get their own order, even when other lines share
 // the same species/finish/etc. Field feedback from production: these doors are
 // finicky enough that bundling them with others has caused mis-splits.
-const ISOLATION_DOOR_STYLES = ["Atlantis", "Aruba", "Nassau", "Salem"];
+// Easton is restricted-distribution and gets its own order for clean production tracking.
+const ISOLATION_DOOR_STYLES = ["Atlantis", "Aruba", "Easton", "Nassau", "Salem"];
 
 // Door styles that require species normalization: "Rift White Oak" -> "White Oak",
 // "Rift Red Oak" -> "Oak". These styles never use the rift designation.
@@ -801,6 +854,10 @@ const DOOR_STYLE_RULES = {
   "Bentley": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Bentley SRP": ['Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Cumberland": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
+  // Easton — restricted door only offered to a handful of customers. Per field
+  // feedback: Maple and MDF only. Treated as an isolation style (its own order)
+  // because of its restricted distribution and to keep production tracking clean.
+  "Easton": ['Maple', 'MDF'],
   "Fairmont": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Freeport": ['Oak', 'Maple', 'Cherry', 'Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
   "Gulfbreeze": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
@@ -1037,6 +1094,9 @@ const state = {
   extracted: null,     // full AI response object
   lines: [],           // line items (canonical)
   flags: new Set(),    // line indices flagged for review
+  // Re-examination feature: line indices the operator has selected to re-run
+  // through the AI with stricter scrutiny and an optional guidance note.
+  selectedForReview: new Set(),
 };
 
 /* ============================================================
@@ -1705,6 +1765,23 @@ When you see a page-footer modification:
 - The operator will see this in the CHK flag and decide whether to apply per-line
 
 This way Beth sees the footer note for every affected line and can confirm or skip the modification on a per-line basis.
+
+MULTI-PAGE ORDER FORMS — CRITICAL READING RULES:
+Many order forms span multiple pages. Field feedback shows the most common errors happen AT PAGE BOUNDARIES — specifically the last few lines of one page and the first few lines of the next page. Follow these rules carefully:
+
+1. LINE NUMBERS CONTINUE ACROSS PAGES. If page 1 ends at line 33, page 2 starts at line 34 (NOT line 1 again). The visible line number on the form is the ground truth — extract every line in numerical order, do not restart numbering.
+
+2. REPEATED HEADER ROWS ARE NOT LINE ITEMS. Most dealer forms repeat the column headers (LINE | QTY | ITEM | DESCRIPTION | HINGE | etc.) at the top of every page. These header rows are NOT line items. Skip them. The same goes for repeated customer info, "page N of M" markers, and footer rows that say things like "Subtotal" or "Continued".
+
+3. PAGE-CONTINUATION MARKERS. Some forms explicitly say "*CONTINUED ON PAGE N" or "*CONTINUATION FROM PAGE N" as their own row. These are NOT line items. Skip them entirely.
+
+4. READ EVERY LINE THAT HAS A QUANTITY. The most reliable signal that a row is a line item: it has a quantity number AND a SKU/item code (SD, FSFK, LIT, etc.) AND a description. If any of those three are missing, it's probably a header/footer/separator row, not a line item.
+
+5. DO NOT SKIP, DUPLICATE, OR REORDER LINES. The output array's order must match the form's line number order. If you see line 33 on page 1 and line 34 on page 2, line 33 comes before line 34 in your output, even though they're on different pages.
+
+6. AT PAGE BOUNDARIES, DOUBLE-CHECK YOUR WORK. After extracting the lines from a page, verify: (a) your last extracted line on this page matches the highest line number visible on this page; (b) your first extracted line on the next page is exactly one higher than your last line of the previous page. If those numbers don't line up, you missed or duplicated a line.
+
+7. WHEN A LINE'S CONTENT IS PARTIALLY OCCLUDED OR AMBIGUOUS: set confidence to "low" and add a note explaining what was unclear. Do NOT guess. Better to flag a line for review than to invent data.
 
 DOOR STYLE PRESERVATION: For SD lines, the "doorStyle" field should preserve the FULL text the dealer wrote, including suffixes like FO, SO, HO, RR. Examples: "Bella FO RR", "Hathaway FO", "Gulfbreeze SO". DO NOT split RR, FO, etc. into modifications — they belong with the door style. The base style name (Bella, Hathaway, etc.) drives validation but the suffixes travel with it.
 
@@ -2396,6 +2473,7 @@ function renderLineTable() {
     if (state.flags.has(i)) tr.classList.add('flagged');
     if (line.isNonDoor) tr.classList.add('filtered');
     if (line.approved) tr.classList.add('approved');
+    if (state.selectedForReview && state.selectedForReview.has(i)) tr.classList.add('selected-for-review');
     tr.dataset.idx = i;
 
     const sku = (line.sku || '').toUpperCase();
@@ -2427,9 +2505,13 @@ function renderLineTable() {
     const srcHint = srcRef
       ? `<div class="source-hint" title="Look here in your original file">📄 ${escapeHtml(srcRef)}</div>`
       : '';
+    // Re-examined badge: shows if this line has been through a re-review pass
+    const reExamBadge = line.reExaminedNote
+      ? `<span class="re-examined-badge" title="Re-examined with operator note: ${escapeHtml(line.reExaminedNote)}">re-examined</span>`
+      : '';
     const flagBadge = flagReasons.length
-      ? `<span class="flag-badge" title="${escapeHtml(reasonText)}">CHK</span><div class="flag-reason">${escapeHtml(reasonText)}</div>${srcHint}`
-      : srcHint;
+      ? `<span class="flag-badge" title="${escapeHtml(reasonText)}">CHK</span>${reExamBadge}<div class="flag-reason">${escapeHtml(reasonText)}</div>${srcHint}`
+      : (reExamBadge ? reExamBadge + srcHint : srcHint);
 
     const priceInfo = priceLine(line);
     const priceCell = priceInfo.found
@@ -2440,7 +2522,9 @@ function renderLineTable() {
     const flagFields = state.flags.has(i) ? getFlagFields(line) : new Set();
     const cellCls = (field) => flagFields.has(field) ? ' class="flag-cell"' : '';
 
+    const selectChecked = (state.selectedForReview && state.selectedForReview.has(i)) ? 'checked' : '';
     tr.innerHTML = `
+      <td style="text-align:center;"><input type="checkbox" class="line-select" data-idx="${i}" ${selectChecked} title="Select for re-examination" /></td>
       <td>${i + 1}${flagBadge ? '<br>' + flagBadge : ''}</td>
       <td${cellCls('sku')}>${line.isNonDoor ? '—' : renderSkuSelect(line, i)}</td>
       <td class="qty${flagFields.has('qty') ? ' flag-cell' : ''}"><input type="number" min="1" value="${line.qty}" data-f="qty" /></td>
@@ -2470,6 +2554,9 @@ function renderLineTable() {
   body.querySelectorAll('button[data-act]').forEach(btn => {
     btn.addEventListener('click', onLineAction);
   });
+  // Sync the "Re-examine Selected" button visibility with current selection.
+  // Safe to call here because the button exists in the static HTML.
+  if (typeof refreshReExamineButton === 'function') refreshReExamineButton();
 }
 
 function renderFinishProcessSelect(line, i) {
@@ -2778,6 +2865,254 @@ document.getElementById('addLineBtn').addEventListener('click', () => {
   renderLineTable();
   updateFlagSummary();
 });
+
+/* ============================================================
+   RE-EXAMINATION FEATURE
+   ============================================================
+   Operator selects suspicious lines, optionally writes a note explaining what
+   looks off, then clicks "Re-examine Selected Lines". The tool sends the
+   original source files PLUS the operator's concerns back to the AI, asking
+   it to look ONLY at those specific lines with extra scrutiny. Returned
+   lines replace the existing ones and stay CHK-flagged so the operator
+   verifies the new result.
+*/
+
+// Refresh the "Re-examine Selected" button visibility and count.
+function refreshReExamineButton() {
+  const btn = document.getElementById('reExamineBtn');
+  const count = state.selectedForReview.size;
+  if (count > 0) {
+    btn.style.display = '';
+    document.getElementById('selectedCount').textContent = count;
+  } else {
+    btn.style.display = 'none';
+  }
+  // Sync "select all" checkbox state
+  const allBox = document.getElementById('selectAllLines');
+  const total = state.lines.filter(l => !l.isNonDoor).length;
+  if (count === 0) allBox.indeterminate = false, allBox.checked = false;
+  else if (count >= total) allBox.indeterminate = false, allBox.checked = true;
+  else allBox.indeterminate = true;
+}
+
+// Click handler on individual row checkboxes — delegated from the table body
+document.getElementById('lineTableBody').addEventListener('change', (e) => {
+  if (!e.target.classList.contains('line-select')) return;
+  const idx = parseInt(e.target.dataset.idx, 10);
+  if (isNaN(idx)) return;
+  if (e.target.checked) state.selectedForReview.add(idx);
+  else state.selectedForReview.delete(idx);
+  // Update row styling without re-rendering the whole table
+  const tr = e.target.closest('tr');
+  if (tr) tr.classList.toggle('selected-for-review', e.target.checked);
+  refreshReExamineButton();
+});
+
+// Select-all checkbox in the table header
+document.getElementById('selectAllLines').addEventListener('change', (e) => {
+  if (e.target.checked) {
+    state.lines.forEach((l, i) => { if (!l.isNonDoor) state.selectedForReview.add(i); });
+  } else {
+    state.selectedForReview.clear();
+  }
+  renderLineTable();
+  refreshReExamineButton();
+});
+
+// Re-examine button — opens the modal asking for a concern note
+document.getElementById('reExamineBtn').addEventListener('click', () => {
+  if (state.selectedForReview.size === 0) return;
+  document.getElementById('reExamLineCount').textContent = state.selectedForReview.size;
+  document.getElementById('reExamNote').value = '';
+  document.getElementById('reExamineModal').classList.remove('hidden');
+  document.getElementById('reExamNote').focus();
+});
+
+// Modal cancel
+document.getElementById('reExamCancel').addEventListener('click', () => {
+  document.getElementById('reExamineModal').classList.add('hidden');
+});
+
+// Modal submit — actually trigger the re-examination
+document.getElementById('reExamSubmit').addEventListener('click', async () => {
+  const note = document.getElementById('reExamNote').value.trim();
+  const selectedIndices = [...state.selectedForReview].sort((a, b) => a - b);
+  document.getElementById('reExamineModal').classList.add('hidden');
+  if (selectedIndices.length === 0) return;
+  await runReExamination(selectedIndices, note);
+});
+
+// The actual re-examination logic. Sends the original files + a focused prompt
+// that includes the selected lines' current data and the operator's note.
+async function runReExamination(selectedIndices, operatorNote) {
+  // Need the original files still in state.files (we keep them for this purpose)
+  if (!state.files || state.files.length === 0) {
+    alert('Cannot re-examine — original source files are no longer available. Re-upload the order to use this feature.');
+    return;
+  }
+  const apiKey = localStorage.getItem('ic_claude_key') || '';
+  if (!apiKey) {
+    alert('No API key configured. Re-examination requires an API call. Contact your admin.');
+    return;
+  }
+
+  const btn = document.getElementById('reExamineBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Re-examining…';
+
+  try {
+    // Build context: show the AI what each selected line currently looks like
+    // so it knows what to compare against.
+    const selectedLinesPayload = selectedIndices.map(i => {
+      const l = state.lines[i];
+      return {
+        currentLineNumber: i + 1,
+        sourceRef: l.sourceRef || '',
+        currentData: {
+          qty: l.qty,
+          sku: l.sku,
+          itemText: l.itemText,
+          doorStyle: l.doorStyle,
+          species: l.species,
+          finishType: l.finishType,
+          finishName: l.finishName,
+          glazeColor: l.glazeColor,
+          glazeTechnique: l.glazeTechnique,
+          finishProcess: l.finishProcess,
+          drawerFrontType: l.drawerFrontType || '',
+          modifications: l.modifications || ''
+        }
+      };
+    });
+
+    const reExamPrompt = `You previously extracted line items from this order. The human operator has flagged ${selectedIndices.length} specific line(s) for re-examination because something looks off.
+
+${operatorNote ? `OPERATOR'S CONCERN: "${operatorNote}"\n\n` : ''}LINES TO RE-EXAMINE (with their current extracted values):
+${JSON.stringify(selectedLinesPayload, null, 2)}
+
+Your task:
+1. Look ONLY at these specific lines in the original source document(s). The "sourceRef" field tells you where to find each line.
+2. Read each line again CAREFULLY — assume the previous extraction may have errors. Pay special attention to: door style spelling, species, finish name, and whether the species/finish positions might be swapped.
+3. If the operator's concern is described, use it as a hint about what to check.
+4. For each line, return your re-examined values. If you now read the same thing as before, that's fine — return the same values.
+5. If a line genuinely looks ambiguous in the source (handwriting unclear, OCR noise, partial occlusion), set confidence to "low" and explain what was unclear in the notes field.
+
+Return ONLY a JSON object with this exact shape:
+{
+  "reExaminedLines": [
+    {
+      "currentLineNumber": <the line number as given above>,
+      "qty": <number>,
+      "sku": "<string>",
+      "itemText": "<string>",
+      "doorStyle": "<string>",
+      "doorStyleVariant": "<string or empty>",
+      "fsfkFrameType": "<string or empty>",
+      "species": "<string>",
+      "finishType": "<string>",
+      "finishName": "<string>",
+      "glazeColor": "<string>",
+      "glazeTechnique": "<string>",
+      "finishProcess": "<string>",
+      "drawerFrontType": "<string or empty>",
+      "modifications": "<string or empty>",
+      "confidence": "high|medium|low",
+      "notes": "<string explaining any changes or remaining uncertainty>"
+    }
+  ]
+}
+
+No other text, no preamble, no markdown fences — just the JSON.`;
+
+    // Build the API call payload
+    const content = [];
+    for (const f of state.files) {
+      const base64 = f.dataUrl.split(',')[1];
+      if (f.kind === 'pdf') {
+        content.push({
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: base64 }
+        });
+      } else if (f.kind === 'image') {
+        content.push({
+          type: "image",
+          source: { type: "base64", media_type: f.mediaType, data: base64 }
+        });
+      }
+    }
+    content.push({ type: "text", text: reExamPrompt });
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 8000,
+        messages: [{ role: "user", content }]
+      })
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`API error ${response.status}: ${errText.substring(0, 200)}`);
+    }
+    const data = await response.json();
+    const textBlock = data.content.find(b => b.type === 'text');
+    if (!textBlock) throw new Error('No text response from API');
+    let jsonStr = textBlock.text.trim();
+    jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    let result;
+    try {
+      result = JSON.parse(jsonStr);
+    } catch {
+      const repaired = repairJsonString(extractOutermostJsonObject(jsonStr) || jsonStr);
+      result = JSON.parse(repaired);
+    }
+    if (!result.reExaminedLines || !Array.isArray(result.reExaminedLines)) {
+      throw new Error('Re-examination response was not in the expected format');
+    }
+
+    // Apply the re-examined values back to state.lines.
+    // Match by currentLineNumber (1-based) to find the right line.
+    let updatedCount = 0;
+    for (const updated of result.reExaminedLines) {
+      const lineIdx = updated.currentLineNumber - 1;
+      if (lineIdx < 0 || lineIdx >= state.lines.length) continue;
+      const line = state.lines[lineIdx];
+      // Update only the data fields, preserve internal state (id, isNonDoor, approved)
+      for (const f of ['qty','sku','itemText','doorStyle','doorStyleVariant','fsfkFrameType',
+                       'species','finishType','finishName','glazeColor','glazeTechnique',
+                       'finishProcess','drawerFrontType','modifications','confidence','notes']) {
+        if (updated[f] !== undefined) line[f] = updated[f];
+      }
+      // Tag the line as re-examined so the badge shows
+      line.reExaminedNote = operatorNote || '(no note provided)';
+      // Force this line into CHK mode so operator verifies the new result
+      state.flags.add(lineIdx);
+      // Drop approved status — operator must re-approve after seeing new data
+      line.approved = false;
+      updatedCount++;
+    }
+
+    // Clear selection now that re-examination is complete
+    state.selectedForReview.clear();
+    renderLineTable();
+    updateFlagSummary();
+    refreshReExamineButton();
+    alert(`Re-examined ${updatedCount} line(s). They are now flagged with the "re-examined" badge so you can verify the new values.`);
+  } catch (err) {
+    console.error('[reExamine] failed:', err);
+    alert('Re-examination failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
 
 // Download Review Report — generates a CSV showing every CHK flag,
 // what was wrong, what the operator changed it to (or whether they approved
