@@ -1024,7 +1024,8 @@ const GLAZE_TECHNIQUES = ["None","Pen","Hand Wipe","Brushed"];
 // SKUs that are not doors and should be filtered out of splitting
 const NON_DOOR_SKUS = [
   "DDU54","DDU","LIT","ES LIT","ESLIT","KIT","CBSET","COLOR BLOCK SET",
-  "MOLDING SET","MOLDING","ACCESSORY","HARDWARE","DOOR DISPLAY UNIT"
+  "MOLDING SET","MOLDING","ACCESSORY","HARDWARE","DOOR DISPLAY UNIT",
+  "TKIT","DRB","CB","CBBOX","PRICE","SASK"
 ];
 
 /* ============================================================
@@ -1405,7 +1406,7 @@ async function parseExcelOrderForm(file) {
     // dealer left the comment blank — and even then we flag the line for review.
     const parsed = parseCommentText(comments);
 
-    const isSdOrFsfk = sku.toUpperCase() === 'SD' || sku.toUpperCase() === 'SFK' || sku.toUpperCase() === 'FSFK';
+    const isSdOrFsfk = sku.toUpperCase() === 'SD' || sku.toUpperCase() === 'SFK' || sku.toUpperCase() === 'NDR' || sku.toUpperCase() === 'SMB15' || sku.toUpperCase() === 'FSFK';
     const hasAnyParsed = parsed.doorStyle || parsed.species || parsed.finishName;
 
     let lineDoorStyle, lineSpecies, lineFinish, lineFinishType;
@@ -1677,11 +1678,33 @@ KIT GROUPING SKUs — SASK: SASK is a "Sample Assortment Kit" — a bundle that 
 SKU TYPES — IMPORTANT:
 - "SD" = Sample Door. Can use any door style from the main catalog. ELITE-series door styles (${ELITE_DOOR_STYLES.join(", ")}) are NEVER valid on SD lines — those are FSFK-only. If you see an SD line with one of those door styles, set sku to "FSFK" instead (the dealer mislabeled it).
 - "SFK" = Sample Front Kit. Same door style catalog as SD (Elite NOT allowed).
+- "NDR" = No Drill Door. A sample door that ships without hinge cup drilling. Treated EXACTLY like SD — same door style catalog, same species/finish/glaze/process fields, same isolation rules. Some dealers write "DR" as shorthand for NDR — if you see "DR" used as a SKU/cabinet code (NOT "DRB" or "DDU"), translate it to "NDR". Pages often have a footer note like "Door size 12 1/2 x 12 1/2 to fit existing display" — this is a clue that DR lines on that page are actually NDR.
+- "SMB15" = Bella 5-piece sample. Treated like a sample-product type (needs door style + species + finish). Comments usually look like "Bella 5PDF Pro White" — the door style is Bella, finish is Pro White, "5PDF" indicates 5-piece drawer front. Each unique SMB15 spec gets its own order.
 - "FSFK" = Full-Size Sample Front Kit. Only uses Elite series door styles: ${ELITE_DOOR_STYLES.join(", ")}.
   FSFK door styles are prefixed with "B-" (Beaded frame) or "S-" (Standard frame). Examples: "B-Vicksburg", "S-Highland Flush", "B-Sanford Beaded".
   When you see a B- or S- prefix on an FSFK line, set "fsfkFrameType" to "B" or "S" and put the door style WITHOUT the prefix in "doorStyle".
   If an FSFK line has no visible B/S prefix, leave fsfkFrameType empty.
+- "DRB" = Drawer Box sample. Treat as a Part (no door style, species, or finish needed). $465 list.
+- "CBSET" / "DDU54" / "LIT" / "ES LIT" / "TKIT" / "DRB" / "PRICE" / "SASK" / etc. = Parts (no door style/species/finish needed).
 - Anything else = Part. Keep the SKU as-written (uppercase).
+
+DR vs DRB DISAMBIGUATION (important): "DR" alone (sometimes followed by a door style description) means NDR — a No Drill Door. "DRB" is a separate SKU meaning Drawer Box. Don't confuse them. Examples:
+- "DR Easton Ivory" → sku: "NDR", doorStyle: "Easton", finish: "Ivory"
+- "DRB" alone → sku: "DRB", no door style
+
+DEALER SHORTHAND for species (used in comments): MPL = Maple, HKY = Hickory, CHY = Cherry, WO = White Oak, KH = Knotty Hickory, RO = Oak (Red Oak).
+
+PAGE-FOOTER MODIFICATIONS: Dealers sometimes write a custom modification at the bottom of a page (below the line items, often in handwriting or in a margin) that applies to some or all lines on that page. Common examples:
+- "Door Size 12 1/2 x 12 1/2 to fit existing display"
+- "All doors to be flat panel"
+- "Modify all hinges to soft-close"
+
+When you see a page-footer modification:
+- For each line on that page that COULD reasonably be affected by the modification (especially NDR lines which often imply a custom size), set the line's "notes" field to: "PAGE FOOTER MOD: <verbatim text>"
+- Do NOT auto-populate the "modifications" column — that's for the operator to confirm
+- The operator will see this in the CHK flag and decide whether to apply per-line
+
+This way Beth sees the footer note for every affected line and can confirm or skip the modification on a per-line basis.
 
 DOOR STYLE PRESERVATION: For SD lines, the "doorStyle" field should preserve the FULL text the dealer wrote, including suffixes like FO, SO, HO, RR. Examples: "Bella FO RR", "Hathaway FO", "Gulfbreeze SO". DO NOT split RR, FO, etc. into modifications — they belong with the door style. The base style name (Bella, Hathaway, etc.) drives validation but the suffixes travel with it.
 
@@ -2015,9 +2038,10 @@ function normalizeLines(rawLines) {
     const skuUp = (sku || '').toUpperCase();
     const ds = (doorStyle || '').trim().toLowerCase();
     const isIsolatedStyle = riftNormSet.has(ds);
-    const isSdOrSfk = skuUp === 'SD' || skuUp === 'SFK';
+    // NDR (No Drill Door) follows SD's species rules
+    const isSdLike = skuUp === 'SD' || skuUp === 'SFK' || skuUp === 'NDR';
 
-    if (isSdOrSfk || isIsolatedStyle) {
+    if (isSdLike || isIsolatedStyle) {
       return isRiftWO ? 'White Oak' : 'Oak';
     }
     return species;
@@ -2150,7 +2174,7 @@ function normalizeLines(rawLines) {
     // be caught by the regular validation rules if the species is wrong).
     {
       const skuUp = sku.toUpperCase();
-      const isSdLike = skuUp === 'SD' || skuUp === 'SFK';
+      const isSdLike = skuUp === 'SD' || skuUp === 'SFK' || skuUp === 'NDR';
       const dsLower = (doorStyle || '').toLowerCase();
       const finishCat = cbFinishType || (l.finishType || '').trim();
       const isPaint = /paint/i.test(finishCat) || PAINT_FINISHES.includes(cbFinishName) ||
@@ -2233,7 +2257,7 @@ function prefillReviewScreen(extracted) {
     if (l.isNonDoor) return;
     if (l.approved) return;  // operator manually approved this line — never flag
     const sku = (l.sku || '').toUpperCase();
-    const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'FSFK';
+    const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
     if (l.confidence === 'low') state.flags.add(i);
     // Parts only need a SKU. SD/FSFK need species + finish.
     if (!sku) state.flags.add(i);
@@ -2256,7 +2280,7 @@ function getFlagReasons(line) {
   if (line.isNonDoor) return reasons;  // skipped lines aren't flagged
   if (line.approved) return reasons;   // operator approved — bypass
   const sku = (line.sku || '').toUpperCase();
-  const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'FSFK';
+  const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
   // Surface conflicts from Excel parsing first — they're the most actionable
   if (line.notes) {
     reasons.push(line.notes);
@@ -2317,7 +2341,7 @@ function getFlagFields(line) {
   if (line.isNonDoor) return fields;
   if (line.approved) return fields;
   const sku = (line.sku || '').toUpperCase();
-  const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'FSFK';
+  const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
   // If we have an explicit fallback or AI uncertainty note, highlight all the
   // splitting fields since any of them could be wrong.
   if (line.notes || (line.confidence === 'low' && !line.notes)) {
@@ -2378,10 +2402,13 @@ function renderLineTable() {
     const isFsfk = sku === 'FSFK';
     const isSd = sku === 'SD';
     const isSfk = sku === 'SFK';
-    // Sample doors, sample front kits, full-size sample front kits all need
-    // door style + species + finish. Everything else is a "Part" with N/A
-    // placeholders, except for CB which has its own special handling.
-    const isPart = !isFsfk && !isSd && !isSfk;
+    const isNdr = sku === 'NDR';
+    const isSmb15 = sku === 'SMB15';
+    // Sample doors (SD), No Drill Doors (NDR), sample front kits (SFK/FSFK),
+    // and SMB15 (Bella 5-piece) all need door style + species + finish.
+    // Everything else is a "Part" with N/A placeholders, except for CB which
+    // has its own special handling.
+    const isPart = !isFsfk && !isSd && !isSfk && !isNdr && !isSmb15;
     // CB (Color Block) is technically a Part SKU but it has a real species + finish
     // associated with it, so we render those fields editable while keeping door
     // style / finish process N/A. Other Parts (LIT, TKIT, DDU54, etc.) get the full
@@ -2469,7 +2496,7 @@ function renderSkuSelect(line, i) {
   // Common values: SD, SFK, FSFK, plus the known part SKUs.
   const sku = (line.sku || '').toUpperCase();
   const datalistId = `skuList_${i}`;
-  const suggestions = ['SD', 'SFK', 'FSFK', ...NON_DOOR_SKUS];
+  const suggestions = ['SD', 'SFK', 'NDR', 'FSFK', 'SMB15', ...NON_DOOR_SKUS];
   const options = suggestions.map(s => `<option value="${s}">`).join('');
   return `<input type="text" data-f="sku" value="${escapeHtml(sku)}" list="${datalistId}" style="text-transform:uppercase;" />
     <datalist id="${datalistId}">${options}</datalist>`;
@@ -2694,7 +2721,7 @@ function onLineAction(e) {
       if (l.isNonDoor) return;
       if (l.approved) return;
       const sku = (l.sku || '').toUpperCase();
-      const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'FSFK';
+      const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
       if (!sku) state.flags.add(i);
       if (!isPart && (!l.species || !l.finishName)) state.flags.add(i);
       if (!isPart && !isValidDoorStyleForSku(l.sku, l.doorStyle)) state.flags.add(i);
@@ -2714,7 +2741,7 @@ function onLineAction(e) {
       const l = state.lines[idx];
       if (!l.isNonDoor) {
         const sku = (l.sku || '').toUpperCase();
-        const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'FSFK';
+        const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
         let shouldFlag = false;
         if (l.confidence === 'low') shouldFlag = true;
         if (!sku) shouldFlag = true;
@@ -2888,7 +2915,7 @@ document.getElementById('generateBtn').addEventListener('click', () => {
   const invalid = activeLines.filter(l => {
     const sku = (l.sku || '').toUpperCase();
     if (!sku) return true;
-    const isPart = sku !== 'SD' && sku !== 'SFK' && sku !== 'FSFK';
+    const isPart = sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
     if (isPart) return false;
     return !l.species || !l.finishName;
   });
@@ -2906,7 +2933,7 @@ document.getElementById('generateBtn').addEventListener('click', () => {
   }
   const missingStyle = activeLines.filter(l => {
     const sku = (l.sku || '').toUpperCase();
-    return (sku === 'SD' || sku === 'SFK' || sku === 'FSFK') && !l.doorStyle;
+    return (sku === 'SD' || sku === 'SFK' || sku === 'NDR' || sku === 'SMB15' || sku === 'FSFK') && !l.doorStyle;
   }).length;
   if (missingStyle > 0) {
     if (!confirm(`${missingStyle} SD/FSFK line(s) have no Door Style filled in. They will still be split correctly, but the door style will be blank on the output form. Continue?`)) {
@@ -2961,6 +2988,15 @@ function splitOrders(lines) {
   const isSd   = (l) => (l.sku || '').toUpperCase() === 'SD';
   const isSfk  = (l) => (l.sku || '').toUpperCase() === 'SFK';
   const isCb   = (l) => (l.sku || '').toUpperCase() === 'CB';
+  // NDR = No Drill Door (sample door without hinge cup drilling). Follows the
+  // EXACT same splitting rules as SD — Species + Finish category + Glaze +
+  // Finish Process, Atlantis/Aruba/Nassau/Salem isolate, CBs can ride along.
+  // It's just a parallel SKU type so it gets its own production order set.
+  const isNdr  = (l) => (l.sku || '').toUpperCase() === 'NDR';
+  // SMB15 = Bella 5-piece sample variant. Each unique SMB15 spec goes on its
+  // own order (per field feedback). Same splitting axes as SD/SFK for now;
+  // refinements can be added when more examples come in.
+  const isSmb15 = (l) => (l.sku || '').toUpperCase() === 'SMB15';
 
   // Classify each Part SKU into one of three buckets:
   //   'paint' — color block sets that are paint-only (CBBOX, CBSET, CBSET-M, CBSET-PNT)
@@ -3004,6 +3040,22 @@ function splitOrders(lines) {
         ? `SFK-ISO::${ds.toLowerCase()}::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}::${df}`
         : `SFK::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}::${df}`;
     }
+    if (isNdr(l)) {
+      // NDR (No Drill Door) follows EXACTLY the same rules as SD — species,
+      // finish category, glaze, finish process. Isolation styles get their
+      // own NDR orders. NDR keys use the "NDR" prefix so they never merge
+      // with SD orders even when species/finish match (different products,
+      // different production paths).
+      const isolated = isolationSet.has(ds.toLowerCase());
+      return isolated
+        ? `NDR-ISO::${ds.toLowerCase()}::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}`
+        : `NDR::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}`;
+    }
+    if (isSmb15(l)) {
+      // SMB15 (Bella 5-piece sample) — per business rule, each SMB15 spec
+      // gets its own order. Same axes as SD for now; refine as needed.
+      return `SMB15::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}`;
+    }
     if (isSd(l) || isCb(l)) {
       // CBs never have a door style, so they can't be on the isolation path —
       // only SD lines with an isolation style (Atlantis, Aruba, Nassau, Salem)
@@ -3035,10 +3087,16 @@ function splitOrders(lines) {
       const fsfk = isFsfk(l);
       const sd = isSd(l);
       const sfk = isSfk(l);
-      const isPart = !fsfk && !sd && !sfk;
-      // Isolation only applies to SD and SFK — FSFK never isolates.
-      const isolated = (sd || sfk) && isolationSet.has(ds.toLowerCase());
-      const skuType = fsfk ? 'FSFK' : (sd ? 'SD' : (sfk ? 'SFK' : 'PART'));
+      const ndr = isNdr(l);
+      const smb15 = isSmb15(l);
+      const isPart = !fsfk && !sd && !sfk && !ndr && !smb15;
+      // Isolation applies to SD, SFK, and NDR — FSFK and SMB15 never isolate.
+      const isolated = (sd || sfk || ndr) && isolationSet.has(ds.toLowerCase());
+      const skuType = fsfk ? 'FSFK'
+                    : (sd ? 'SD'
+                    : (sfk ? 'SFK'
+                    : (ndr ? 'NDR'
+                    : (smb15 ? 'SMB15' : 'PART'))));
       map.set(k, {
         key: k,
         skuType,
@@ -3060,15 +3118,15 @@ function splitOrders(lines) {
     map.get(k).lines.push(l);
   }
 
-  // PASS 2: try to attach each CB to a matching SD or SFK group. CBs match
-  // exactly on Species + Finish category + Glaze technique + Glaze color +
-  // Finish process. The CB itself doesn't have a SKU-type prefix, so we compute
-  // BOTH the SD-shaped key and the SFK-shaped key and check each — preferring
-  // an SD match over an SFK match if both exist (since SDs are typically the
-  // "primary" sample item on an order).
+  // PASS 2: try to attach each CB to a matching SD, SFK, or NDR group. CBs
+  // match exactly on Species + Finish category + Glaze technique + Glaze
+  // color + Finish process. The CB itself doesn't have a SKU-type prefix,
+  // so we compute all three candidate keys and check each in priority order:
+  // SD wins over SFK wins over NDR (SDs are typically the "primary" sample
+  // item on an order).
   //
   // Note: CBs never have a door style, so they never trigger isolation. They
-  // can only ride along on a non-isolated SD/SFK group.
+  // can only ride along on a non-isolated group.
   const orphanCbs = [];
   for (const cb of cbLines) {
     const species = (cb.species || '').trim().toLowerCase();
@@ -3078,13 +3136,17 @@ function splitOrders(lines) {
     const finishProc = (cb.finishProcess || '').trim().toLowerCase();
     const sdKey = `SD::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}`;
     const sfkKey = `SFK::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}`;
+    const ndrKey = `NDR::${species}::${cat}::${glazeTech}::${glazeColor}::${finishProc}`;
 
     const sdMatch = map.get(sdKey);
     const sfkMatch = map.get(sfkKey);
+    const ndrMatch = map.get(ndrKey);
     if (sdMatch && sdMatch.skuType === 'SD') {
       sdMatch.cbLines.push(cb);
     } else if (sfkMatch && sfkMatch.skuType === 'SFK') {
       sfkMatch.cbLines.push(cb);
+    } else if (ndrMatch && ndrMatch.skuType === 'NDR') {
+      ndrMatch.cbLines.push(cb);
     } else {
       orphanCbs.push(cb);
     }
@@ -3118,10 +3180,13 @@ function splitOrders(lines) {
 
   // Sort: SD (isolation first), then SD-CB orphan CBs, then SFK (isolation first),
   // then FSFK, then Parts.
-  const typeRank = { SD: 0, 'SD-CB': 1, SFK: 2, FSFK: 3, PART: 4 };
+  // Sort order: SD orders first (isolation styles first), then orphan CB-only
+  // orders, then SFK, then NDR (parallel to SD but distinct), then FSFK, then
+  // SMB15 (Bella 5-piece), then general Parts.
+  const typeRank = { SD: 0, 'SD-CB': 1, SFK: 2, NDR: 3, FSFK: 4, SMB15: 5, PART: 6 };
   return [...map.values()].sort((a, b) => {
     if (typeRank[a.skuType] !== typeRank[b.skuType]) return typeRank[a.skuType] - typeRank[b.skuType];
-    if (a.skuType === 'SD' || a.skuType === 'SFK') {
+    if (a.skuType === 'SD' || a.skuType === 'SFK' || a.skuType === 'NDR') {
       const aIso = a.isolatedDoorStyle ? 0 : 1;
       const bIso = b.isolatedDoorStyle ? 0 : 1;
       if (aIso !== bIso) return aIso - bIso;
@@ -3195,6 +3260,21 @@ function renderSuborders(groups) {
           tagText = cbCount > 0 ? `SFK · +${cbCount} CB` : 'SFK';
         }
         tagColor = '#3a6b9a';   // muted blue, distinct from SD/FSFK/PART
+      } else if (g.skuType === 'NDR') {
+        // No Drill Door — parallel SKU type to SD, distinct production order
+        if (g.isolatedDoorStyle) {
+          headerLabel = `NDR · ${g.isolatedDoorStyle} · ${baseLabel}`;
+          tagText = cbCount > 0 ? `NDR · isolated · +${cbCount} CB` : 'NDR · isolated style';
+        } else {
+          headerLabel = `NDR · ${baseLabel}`;
+          tagText = cbCount > 0 ? `NDR · +${cbCount} CB` : 'NDR · No Drill Door';
+        }
+        tagColor = '#8c6d3a';   // muted bronze, distinct from SD/SFK/FSFK
+      } else if (g.skuType === 'SMB15') {
+        // Bella 5-piece sample — each unique spec gets its own order
+        headerLabel = `SMB15 · ${baseLabel}`;
+        tagColor = '#5a4ec2';
+        tagText = 'SMB15 · Bella 5-piece';
       } else if (g.skuType === 'SD-CB') {
         // Orphan CB-only order: no SD partner found, CBs go on their own.
         headerLabel = `Color Blocks · ${baseLabel}`;
@@ -3580,6 +3660,14 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
         ? `SFK SAMPLE ORDER · ${group.isolatedDoorStyle.toUpperCase()}`
         : `SFK SAMPLE ORDER`;
       headerText = `${sfkPrefix} · ${group.species.toUpperCase()} · ${group.finishCategory.toUpperCase()}${glazeSuffix}${procSuffix}${dfSuffix}${cbSuffix}`;
+    } else if (group.skuType === 'NDR') {
+      // No Drill Door — parallel SKU to SD
+      const ndrPrefix = group.isolatedDoorStyle
+        ? `NDR (NO DRILL) ORDER · ${group.isolatedDoorStyle.toUpperCase()}`
+        : `NDR (NO DRILL) ORDER`;
+      headerText = `${ndrPrefix} · ${group.species.toUpperCase()} · ${group.finishCategory.toUpperCase()}${glazeSuffix}${procSuffix}${cbSuffix}`;
+    } else if (group.skuType === 'SMB15') {
+      headerText = `SMB15 (BELLA 5-PIECE) · ${group.species.toUpperCase()} · ${group.finishCategory.toUpperCase()}${glazeSuffix}${procSuffix}`;
     } else if (group.skuType === 'SD-CB') {
       headerText = `COLOR BLOCKS ORDER · ${group.species.toUpperCase()} · ${group.finishCategory.toUpperCase()}${glazeSuffix}${procSuffix}`;
     } else if (group.isolatedDoorStyle) {
@@ -3635,6 +3723,18 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
         const sfkStyles = [...new Set(group.lines.map(l => l.doorStyle).filter(Boolean))];
         doorStyleSpec = sfkStyles.length === 1 ? sfkStyles[0] : (sfkStyles.length === 0 ? 'Sample Front Kits' : 'Sample Front Kit Mix');
       }
+    } else if (group.skuType === 'NDR') {
+      // NDR (No Drill Door): same logic as SD
+      if (group.isolatedDoorStyle) {
+        doorStyleSpec = group.isolatedDoorStyle;
+      } else {
+        const ndrStyles = [...new Set(group.lines.map(l => l.doorStyle).filter(Boolean))];
+        doorStyleSpec = ndrStyles.length === 1 ? ndrStyles[0] : (ndrStyles.length === 0 ? 'No Drill Doors' : 'No Drill Door Mix');
+      }
+    } else if (group.skuType === 'SMB15') {
+      // SMB15 — Bella 5-piece sample
+      const smbStyles = [...new Set(group.lines.map(l => l.doorStyle).filter(Boolean))];
+      doorStyleSpec = smbStyles.length === 1 ? smbStyles[0] : 'Bella 5-Piece Sample';
     } else {
       // SD: isolation styles always force their own single-style label.
       // Otherwise, if all lines share one door style show it, else "Sample Door Mix".
