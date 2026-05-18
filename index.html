@@ -845,7 +845,7 @@ const DOOR_STYLE_ALIASES = {
 // (DOOR_STYLE_ALIASES) maps "Salem" → "Salem (Slab)" so lookups work either way.
 // Door styles not listed here have no validation rule and won't be flagged.
 const DOOR_STYLE_RULES = {
-  "Alexandria": ['Oak', 'Maple', 'Cherry', 'Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
+  "Alexandria": ['Oak', 'Maple', 'Cherry', 'Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Aruba": ['Maple', 'White Oak', 'MDF'],
   "Atlantic Breeze": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Atlantis": ['Maple', 'White Oak', 'MDF'],
@@ -859,13 +859,13 @@ const DOOR_STYLE_RULES = {
   // because of its restricted distribution and to keep production tracking clean.
   "Easton": ['Maple', 'MDF'],
   "Fairmont": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
-  "Freeport": ['Oak', 'Maple', 'Cherry', 'Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
+  "Freeport": ['Oak', 'Maple', 'Cherry', 'Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Gulfbreeze": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Hathaway": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Hathaway SRP": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
-  "Highland": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
+  "Highland": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Jamestown": ['Maple'],
-  "Kimberly": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
+  "Kimberly": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Lenoir": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Lexington": ['Maple'],
   "Madison": ['Maple'],
@@ -874,17 +874,17 @@ const DOOR_STYLE_RULES = {
   "Monterey": ['Maple'],
   "Nassau": ['Maple', 'White Oak', 'MDF'],
   "Newcastle": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
-  "Newton": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
+  "Newton": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Oxford": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Oxford SRP": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak'],
   "Salem (Slab)": ['Maple', 'White Oak', 'MDF', 'Oak'],
-  "Sanford": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
+  "Sanford": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Sedona": ['Maple'],
   "Shreveport": ['Maple'],
-  "Somerville": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
+  "Somerville": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Southporte": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
-  "Tripoli": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak'],
-  "Vicksburg": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF', 'Rift White Oak', 'Rift Red Oak']
+  "Tripoli": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
+  "Vicksburg": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak']
 };
 
 // Stain → allowed species. RCWO/RCRO are pre-applied (RCWO follows WO, RCRO follows Oak).
@@ -1744,6 +1744,7 @@ SKU TYPES — IMPORTANT:
   FSFK door styles are prefixed with "B-" (Beaded frame) or "S-" (Standard frame). Examples: "B-Vicksburg", "S-Highland Flush", "B-Sanford Beaded".
   When you see a B- or S- prefix on an FSFK line, set "fsfkFrameType" to "B" or "S" and put the door style WITHOUT the prefix in "doorStyle".
   If an FSFK line has no visible B/S prefix, leave fsfkFrameType empty.
+  IMPORTANT — ELITE FSFK SPECIES RULE: Elite door styles are NOT available in MDF. If you see an FSFK line ordered in MDF (the rep made a mistake), set species to "Maple" instead — that's the correct Elite substrate. This applies to ALL Elite door styles regardless of finish.
 - "DRB" = Drawer Box sample. Treat as a Part (no door style, species, or finish needed). $465 list.
 - "CBSET" / "DDU54" / "LIT" / "ES LIT" / "TKIT" / "DRB" / "PRICE" / "SASK" / etc. = Parts (no door style/species/finish needed).
 - Anything else = Part. Keep the SKU as-written (uppercase).
@@ -2259,6 +2260,22 @@ function normalizeLines(rawLines) {
       if (isSdLike && PAINT_MDF_ONLY_DOOR_STYLES.has(dsLower) && isPaint &&
           normalizedSpecies && normalizedSpecies.toLowerCase() !== 'mdf') {
         normalizedSpecies = 'MDF';
+      }
+    }
+
+    // Field-feedback rule (inverse of the above for Elite/FSFK):
+    // ELITE FSFK door styles are NOT available in MDF. The 2023 price book
+    // technically lists MDF as allowed, but per Sean (production), Elite-line
+    // doors are not offered on MDF substrate. When a rep mistakenly orders an
+    // FSFK in MDF, silently coerce to Maple (the default Elite substrate).
+    // No note, no flag — same pattern as the Atlantis paint→MDF coercion above.
+    // Applies ONLY to FSFK (Elite-only SKU type). SDs and other SKUs on Elite
+    // styles aren't a thing — Elite doors only appear on FSFK lines.
+    {
+      const skuUp = sku.toUpperCase();
+      const speciesLower = (normalizedSpecies || '').toLowerCase();
+      if (skuUp === 'FSFK' && speciesLower === 'mdf') {
+        normalizedSpecies = 'Maple';
       }
     }
 
