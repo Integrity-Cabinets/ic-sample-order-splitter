@@ -293,6 +293,72 @@
     font-weight: 600;
     cursor: help;
   }
+  /* Order tabs — shown only when multiple logical orders detected in one upload */
+  .order-tabs-container {
+    margin: -8px 0 18px;
+    padding: 12px;
+    background: #f5f1e8;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+  }
+  .order-tabs-container.hidden { display: none; }
+  .order-tabs-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    line-height: 1.35;
+  }
+  .order-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .order-tab {
+    padding: 8px 14px;
+    background: white;
+    border: 1px solid #d4ccb8;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink);
+    transition: all 0.15s;
+    border-radius: 3px 3px 0 0;
+    line-height: 1.3;
+  }
+  .order-tab:hover {
+    background: #faf7ed;
+    border-color: var(--accent);
+  }
+  .order-tab.active {
+    background: white;
+    border-bottom-color: var(--accent);
+    color: var(--accent-dark);
+  }
+  .order-tab .tab-num {
+    display: inline-block;
+    background: var(--accent);
+    color: var(--ink);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 9px;
+    margin-right: 6px;
+    font-weight: 700;
+  }
+  .order-tab.active .tab-num {
+    background: var(--accent-dark);
+    color: white;
+  }
+  .order-tab .tab-flags {
+    display: inline-block;
+    background: #e8a55a;
+    color: white;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 9px;
+    margin-left: 6px;
+    font-weight: 700;
+  }
   /* Re-examine modal */
   .re-exam-modal {
     position: fixed;
@@ -389,6 +455,24 @@
   }
   .line-table tr.approved {
     background: #f3f9f4;
+  }
+  /* Inline approve button — lives in the left # column next to the CHK badge
+     so the operator can approve without scrolling right. */
+  .line-table button.inline-approve-btn {
+    margin-top: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--ok);
+    border: none;
+    border-radius: 3px;
+    padding: 2px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    width: auto;
+  }
+  .line-table button.inline-approve-btn:hover {
+    filter: brightness(1.1);
   }
   .line-table tr.approved.flagged {
     background: #f3f9f4;  /* approval wins over flag styling */
@@ -601,6 +685,12 @@
     <h2><span class="step-num">02</span> Review &amp; Correct</h2>
     <p class="desc">The AI extracted what it saw. Red-flagged rows need your attention. Dropdowns are your safety net — correct anything wrong before continuing.</p>
 
+    <!-- Order tabs (visible only when multiple logical orders were detected) -->
+    <div id="orderTabsContainer" class="order-tabs-container hidden">
+      <div class="order-tabs-label">Multiple orders detected in this upload — each has its own PO and ship-to. Click a tab to review that order's lines.</div>
+      <div class="order-tabs" id="orderTabs"></div>
+    </div>
+
     <div class="flag-note" id="flagSummary"></div>
 
     <h3 style="font-family:'Helvetica Neue',sans-serif; font-size:11px; text-transform:uppercase; letter-spacing:0.15em; color:var(--muted); margin:0 0 10px;">Order Header</h3>
@@ -702,9 +792,11 @@
 
     <div style="margin-top:20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <button class="secondary" id="addLineBtn">+ Add Line</button>
+      <button class="secondary" id="approveAllBtn" title="Approve every currently-flagged line at once — use after you've eyeballed the corrections">✓ Approve All Flagged (<span id="flaggedCount">0</span>)</button>
       <button class="secondary" id="reExamineBtn" style="display:none;" title="Re-run the AI extraction on the selected lines with extra scrutiny and your guidance notes">🔍 Re-examine Selected Lines (<span id="selectedCount">0</span>)</button>
       <button class="secondary" id="downloadReportBtn" title="Download a CSV showing every flag, fix, and approval — send this to your manager so we can refine the tool">📋 Download Review Report</button>
-      <button class="primary" id="generateBtn" style="margin-left:auto">Generate Split Orders →</button>
+      <button class="secondary" id="generateAllOrdersBtn" style="margin-left:auto; display:none;" title="Generate split sub-orders for ALL logical orders at once (every tab)">Generate ALL Orders →</button>
+      <button class="primary" id="generateBtn">Generate Split Orders →</button>
     </div>
 
     <!-- Re-examine modal -->
@@ -805,6 +897,16 @@ const PAINT_FINISHES = [
 const TRANSLUCENT_FINISHES = [
   "Autumn Bronze","Antique White","Bayou Mist","Mystic Beige","Wheat"
 ];
+
+// Discontinued finishes — no longer offered by Integrity. When a dealer orders
+// one of these (often on an old form or from memory), the tool should NOT
+// silently drop the line. Instead it flags the line with a clear "this finish
+// is discontinued" message so the operator can contact the dealer for a
+// current substitute. Map each discontinued finish to its former type so we
+// can still classify the line for display. Add to this list as finishes retire.
+const DISCONTINUED_FINISHES = {
+  "ginger": "Stain"
+};
 
 // Door styles that force their own order group, regardless of other lines
 // sharing the same species+finishCategory. Add more here as needed.
@@ -938,6 +1040,91 @@ const TRANSLUCENT_PAINT_RULES = {
   "Mystic Beige": ['Cherry'],
   "Wheat": ['White Oak', 'Rift White Oak']
 };
+
+// ============================================================
+// FUZZY MATCHING — auto-correct obvious dealer misspellings
+// ============================================================
+// Dealers frequently misspell door styles ("Lenior"→"Lenoir", "Gulf breeze"
+// →"Gulfbreeze", "alantic breeeze"→"Atlantic Breeze") and finishes
+// ("Expresso"→"Espresso"). When the misspelling is OBVIOUS (small edit
+// distance to exactly one catalog entry), we auto-correct silently — no flag,
+// no review. When it's AMBIGUOUS (close to two different entries, or too far
+// from anything), we leave it alone so the normal validation flags it.
+
+// Standard Levenshtein edit distance between two strings.
+function levenshtein(a, b) {
+  a = a || ''; b = b || '';
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+// Normalize a string for comparison: lowercase, strip spaces and punctuation.
+// This makes "Gulf breeze", "gulfbreeze", and "Gulf-Breeze" all compare equal,
+// so spacing/punctuation differences cost nothing in the distance calc.
+function fuzzyNormalize(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Find the best fuzzy match for `input` among `candidates`. Returns:
+//   { match: <candidate>, distance: <n>, ambiguous: <bool>, exact: <bool> }
+// or null if nothing is close enough.
+//
+// Logic:
+//   - exact normalized match (distance 0) => return immediately, exact=true
+//   - otherwise find the candidate(s) with the smallest distance
+//   - accept the best match only if it's within the threshold AND clearly
+//     better than the second-best (to avoid silently picking between two
+//     equally-plausible options)
+//   - threshold scales with word length: short words allow 1 edit, longer
+//     words allow up to ~25% of their length
+function fuzzyMatch(input, candidates) {
+  const normInput = fuzzyNormalize(input);
+  if (!normInput) return null;
+
+  let best = null, bestDist = Infinity;
+  let secondDist = Infinity;
+  for (const cand of candidates) {
+    const normCand = fuzzyNormalize(cand);
+    const d = levenshtein(normInput, normCand);
+    if (d < bestDist) {
+      secondDist = bestDist;
+      bestDist = d;
+      best = cand;
+    } else if (d < secondDist) {
+      secondDist = d;
+    }
+  }
+  if (best === null) return null;
+
+  if (bestDist === 0) {
+    return { match: best, distance: 0, ambiguous: false, exact: true };
+  }
+
+  // Threshold: allow more edits for longer words. Minimum 2 edits so common
+  // transpositions like "Lenior"→"Lenoir" (swap = 2 edits) are caught. Longer
+  // words scale up to ~30% of their length ("atlanticbreeze" allows ~4).
+  const threshold = Math.max(2, Math.floor(normInput.length * 0.3));
+  if (bestDist > threshold) {
+    return null;  // too far from anything — let validation flag it
+  }
+
+  // Ambiguous if the second-best is within 1 edit of the best (genuine toss-up)
+  const ambiguous = (secondDist - bestDist) <= 1;
+  return { match: best, distance: bestDist, ambiguous, exact: false };
+}
 
 // Looks up a door style in DOOR_STYLE_RULES, applying alias normalization first
 // so "Salem" finds "Salem (Slab)" and similar.
@@ -1089,15 +1276,70 @@ const NON_DOOR_SKUS = [
    STATE
    ============================================================ */
 
+// State holds both the legacy single-order fields (lines, flags, etc.) AND a new
+// logicalOrders array for multi-PO uploads. When an upload has multiple logical
+// orders (e.g. one PDF with 3 ship-to addresses, 3 POs), each becomes its own
+// entry in logicalOrders. The legacy fields below are KEPT as a "view" into the
+// currently-active logical order so that every existing function still works
+// unchanged. This is the key design choice: instead of refactoring every
+// function that reads state.lines, we make state.lines POINT AT the active
+// order's lines array. Mutations to state.lines flow back to the order.
+//
+// Reconciliation rule: whenever logicalOrders or currentOrderIndex changes,
+// call syncCurrentOrderView() to repoint the legacy fields.
 const state = {
-  files: [],           // {name, dataUrl, mediaType}
-  extracted: null,     // full AI response object
-  lines: [],           // line items (canonical)
-  flags: new Set(),    // line indices flagged for review
-  // Re-examination feature: line indices the operator has selected to re-run
-  // through the AI with stricter scrutiny and an optional guidance note.
+  files: [],           // {name, dataUrl, mediaType, kind}
+
+  // === Multi-order data (new) ===
+  logicalOrders: [],   // array of LogicalOrder objects (see makeLogicalOrder())
+  currentOrderIndex: 0,
+
+  // === Legacy single-order fields (proxy into logicalOrders[currentOrderIndex]) ===
+  extracted: null,
+  lines: [],           // reference to active order's lines array
+  flags: new Set(),    // reference to active order's flags Set
   selectedForReview: new Set(),
+  originalLines: null,
+  splitGroups: null,
 };
+
+// Factory: construct a fresh logical order with all the per-order state it needs.
+function makeLogicalOrder(label) {
+  return {
+    label: label || '',            // human-readable tab label
+    header: {},                    // PO, billing, ship-to fields
+    lines: [],                     // line items
+    flags: new Set(),              // CHK-flagged line indices (relative to this order's lines)
+    selectedForReview: new Set(),  // re-examination selection
+    originalLines: null,           // snapshot from extraction time, for the Review Report
+    splitGroups: null,             // populated by splitOrders() after Generate is clicked
+  };
+}
+
+// Point the legacy single-order state at the currently-active logical order.
+// Call this any time currentOrderIndex changes OR after any structural change
+// to logicalOrders (push/splice/etc).
+function syncCurrentOrderView() {
+  if (state.logicalOrders.length === 0) {
+    state.lines = [];
+    state.flags = new Set();
+    state.selectedForReview = new Set();
+    state.originalLines = null;
+    state.splitGroups = null;
+    return;
+  }
+  // Clamp index
+  if (state.currentOrderIndex >= state.logicalOrders.length) {
+    state.currentOrderIndex = state.logicalOrders.length - 1;
+  }
+  if (state.currentOrderIndex < 0) state.currentOrderIndex = 0;
+  const active = state.logicalOrders[state.currentOrderIndex];
+  state.lines = active.lines;
+  state.flags = active.flags;
+  state.selectedForReview = active.selectedForReview;
+  state.originalLines = active.originalLines;
+  state.splitGroups = active.splitGroups;
+}
 
 /* ============================================================
    STEP 1 — UPLOAD + EXTRACT
@@ -1296,19 +1538,26 @@ async function runExtraction() {
   setStatus('Preparing…');
 
   try {
-    let combined = { header: {}, lineItems: [] };
+    // Accumulate AI logical orders here. Excel files all merge into the first
+    // logical order (they're single-PO forms by design). AI files may return
+    // multiple orders if they detect different POs/ship-tos across pages.
+    let aiLogicalOrders = [];          // [{label, header, lineItems}, ...]
+    let excelMerged = null;            // {header, lineItems} or null
+    let salvageWarning = null;
 
-    // Parse Excel files first (free, fast, deterministic)
+    // Parse Excel files first (free, fast, deterministic). All Excel files
+    // merge into a single logical order since Excel forms are single-PO.
     if (excelFiles.length > 0) {
       setStatus(`Parsing ${excelFiles.length} Excel file(s)…`);
       setProgress(25);
+      excelMerged = { header: {}, lineItems: [] };
       for (const f of excelFiles) {
         const parsed = await parseExcelOrderForm(f.file);
         // Merge: take first non-empty header value, append all line items
         for (const k of Object.keys(parsed.header)) {
-          if (!combined.header[k] && parsed.header[k]) combined.header[k] = parsed.header[k];
+          if (!excelMerged.header[k] && parsed.header[k]) excelMerged.header[k] = parsed.header[k];
         }
-        combined.lineItems.push(...parsed.lineItems);
+        excelMerged.lineItems.push(...parsed.lineItems);
       }
     }
 
@@ -1327,37 +1576,89 @@ async function runExtraction() {
       setProgress(50);
       const aiResult = await callClaudeVision(key, aiFiles);
       console.log('[extract] AI returned:', aiResult);
-      // Merge AI header (don't overwrite Excel header values), append AI line items
-      for (const k of Object.keys(aiResult.header || {})) {
-        if (!combined.header[k] && aiResult.header[k]) combined.header[k] = aiResult.header[k];
+
+      // The AI now returns { logicalOrders: [...] }. Backward-compat: if it
+      // returned the old single-order shape { header, lineItems }, wrap it in
+      // a one-element logicalOrders array so downstream code is uniform.
+      if (aiResult.logicalOrders && Array.isArray(aiResult.logicalOrders) && aiResult.logicalOrders.length > 0) {
+        aiLogicalOrders = aiResult.logicalOrders;
+      } else if (aiResult.lineItems) {
+        // Legacy shape
+        aiLogicalOrders = [{
+          label: '',
+          header: aiResult.header || {},
+          lineItems: aiResult.lineItems
+        }];
       }
-      combined.lineItems.push(...(aiResult.lineItems || []));
-      // Bubble up a non-fatal salvage warning if the JSON was malformed and
-      // we recovered partial results.
-      if (aiResult._salvageWarning) {
-        combined._salvageWarning = aiResult._salvageWarning;
+      if (aiResult._salvageWarning) salvageWarning = aiResult._salvageWarning;
+    }
+
+    // Build state.logicalOrders. Start fresh on each extraction.
+    state.logicalOrders = [];
+
+    // If we have AI logical orders, each becomes its own logical order. Merge
+    // any Excel data into the FIRST AI logical order (Excel is meant as a
+    // single-order data source).
+    if (aiLogicalOrders.length > 0) {
+      for (let i = 0; i < aiLogicalOrders.length; i++) {
+        const lo = aiLogicalOrders[i];
+        const order = makeLogicalOrder(lo.label || `Order ${i + 1}`);
+        order.header = { ...(lo.header || {}) };
+        let allLineItems = [...(lo.lineItems || [])];
+        // Merge Excel into first order
+        if (i === 0 && excelMerged) {
+          for (const k of Object.keys(excelMerged.header)) {
+            if (!order.header[k] && excelMerged.header[k]) order.header[k] = excelMerged.header[k];
+          }
+          allLineItems = [...excelMerged.lineItems, ...allLineItems];
+        }
+        order.lines = normalizeLines(allLineItems);
+        order.originalLines = JSON.parse(JSON.stringify(order.lines));
+        state.logicalOrders.push(order);
       }
+    } else if (excelMerged) {
+      // Excel-only path
+      const order = makeLogicalOrder('Order 1');
+      order.header = excelMerged.header;
+      order.lines = normalizeLines(excelMerged.lineItems);
+      order.originalLines = JSON.parse(JSON.stringify(order.lines));
+      state.logicalOrders.push(order);
     }
 
     setProgress(85);
     setStatus('Parsing response…');
 
-    if (!combined.lineItems || combined.lineItems.length === 0) {
+    if (state.logicalOrders.length === 0 || state.logicalOrders.every(o => o.lines.length === 0)) {
       throw new Error('No line items found in any of the files.');
     }
 
-    state.extracted = combined;
-    state.lines = normalizeLines(combined.lineItems);
-    // Snapshot the initial extraction so we can show what got changed during review
-    state.originalLines = JSON.parse(JSON.stringify(state.lines));
-    prefillReviewScreen(combined);
+    // Auto-flag low-confidence lines in EVERY logical order
+    for (const order of state.logicalOrders) {
+      order.lines.forEach((l, i) => {
+        const isPart = l.sku && l.sku !== 'SD' && l.sku !== 'SFK' && l.sku !== 'NDR' && l.sku !== 'SMB15' && l.sku !== 'FSFK';
+        if (!isPart && getFlagReasons(l).length > 0) order.flags.add(i);
+        else if (l.confidence === 'low' || l.confidence === 'medium') order.flags.add(i);
+      });
+    }
+
+    state.currentOrderIndex = 0;
+    syncCurrentOrderView();
+
+    // Tell the rest of the UI we're loaded. prefillReviewScreen reads from the
+    // active logical order via syncCurrentOrderView's pointers.
+    state.extracted = state.logicalOrders[0];  // legacy for any code that reads this
+    prefillReviewScreen({ header: state.logicalOrders[0].header });
+    renderOrderTabs();   // new — render tabs UI if multi-order
+
     setProgress(100);
-    if (combined._salvageWarning) {
-      // Non-fatal partial-extraction notice. Status message stays visible so
-      // the operator knows not all lines made it through.
-      setStatus(`⚠ ${combined._salvageWarning}`);
+    const totalLines = state.logicalOrders.reduce((s, o) => s + o.lines.length, 0);
+    const orderCount = state.logicalOrders.length;
+    if (salvageWarning) {
+      setStatus(`⚠ ${salvageWarning}`);
+    } else if (orderCount > 1) {
+      setStatus(`Ready for review — ${orderCount} separate orders detected, ${totalLines} total lines`);
     } else {
-      setStatus(`Ready for review — ${combined.lineItems.length} lines extracted`);
+      setStatus(`Ready for review — ${totalLines} lines extracted`);
     }
 
     document.getElementById('step2').classList.remove('hidden');
@@ -1712,6 +2013,8 @@ TRANSLUCENT_FINISHES: ${TRANSLUCENT_FINISHES.join(", ")}
 GLAZE_COLORS: ${GLAZE_COLORS.join(", ")}
 GLAZE_TECHNIQUES: ${GLAZE_TECHNIQUES.join(", ")}
 
+DISCONTINUED FINISHES: ${Object.keys(DISCONTINUED_FINISHES).join(", ")}. These finishes are no longer offered but dealers sometimes still order them. If you see one, STILL capture it exactly as written in the finishName field and set confidence to "low" with a note like "discontinued finish". DO NOT mark the line as isNonDoor, DO NOT silently substitute a different finish, and DO NOT drop the line. The operator needs to see the discontinued finish so they can contact the dealer. The tool will flag it automatically.
+
 PARTS / OTHER SKUs: Anything that is not "SD", "SFK", or "FSFK" is a "Part" — examples: DDU54 (Door Display Unit), LIT (Literature), ES LIT, TKIT (Tool Kit), KIT, CBSET (Color Block Set), MOLDING SET, PRICE, ACCESSORY, HARDWARE. Extract these normally with their SKU, qty, and itemText. They DO NOT need a doorStyle, species, or finish — leave those blank. They get split into their own orders by SKU. Set isNonDoor=false for these (it's only for items the user wants to manually exclude from the output entirely).
 
 CB (Color Block) — SPECIAL CASE: The bare SKU "CB" is a single-finish color block. The dealer typically writes "CB" + the name of one specific finish (e.g., "CB Ivory", "CB Pacific Sand", "CB White Oak-Natural", "CB White Oak-Cappuccino"). For CB lines:
@@ -1814,44 +2117,67 @@ For each line item, set "confidence": "high", "medium", or "low".
 - low = illegible, ambiguous, or doesn't match any reference value
 Set confidence to "low" for any field you had to guess.
 
+MULTIPLE LOGICAL ORDERS IN ONE UPLOAD — CRITICAL:
+A single upload may contain MULTIPLE independent orders that must be processed separately. Each is a "logical order" with its own PO#, ship-to address, and line items. Detect this when you see EITHER signal:
+- Different PO numbers on different pages (e.g. "Samples - SanRamon" on page 1, "Samples - Roseville" on page 2)
+- Different shipping addresses on different pages (different street, different city, different state, etc.)
+
+When EITHER signal is present, output ONE entry in the "logicalOrders" array per distinct logical order:
+- Page 1 lines go in the first logical order (with page 1's PO/ship-to header)
+- Page 2 lines go in the second logical order (with page 2's PO/ship-to header)
+- Page 3 lines go in the third logical order (with page 3's PO/ship-to header)
+
+When the upload has ONE PO and ONE ship-to across all pages (the common case — typical single dealer order), output exactly ONE entry in the "logicalOrders" array, even if it spans multiple pages.
+
+HARD RULE — NEVER MERGE LINES FROM DIFFERENT POs OR DIFFERENT SHIP-TOs INTO THE SAME LOGICAL ORDER. Getting this wrong sends doors to the wrong address in production. When in doubt, split into separate logical orders.
+
+Label each logical order with a short tab-friendly string (under 30 chars). Use the most identifying piece of info: PO suffix ("SanRamon"), or ship-to city ("San Ramon"), or both ("SanRamon - San Ramon"). The operator needs to recognize at a glance which order is which.
+
 Output ONLY valid JSON. No markdown, no prose, no code fences. Exactly this structure:
 
 {
-  "header": {
-    "date": "",
-    "po": "",
-    "alphaCode": "",
-    "designer": "",
-    "jobName": "",
-    "orderType": "Standard",
-    "construction": "",
-    "deliveryMethod": "Standard Delivery",
-    "billName": "", "billPhone": "", "billStreet": "", "billCity": "",
-    "billState": "", "billZip": "", "billEmail": ""
-  },
-  "lineItems": [
+  "logicalOrders": [
     {
-      "qty": 1,
-      "sku": "",
-      "itemText": "original text as written",
-      "doorStyle": "",
-      "doorStyleVariant": "",
-      "fsfkFrameType": "",
-      "species": "",
-      "finishType": "",
-      "finishName": "",
-      "glazeColor": "",
-      "glazeTechnique": "",
-      "finishProcess": "",
-      "drawerFrontType": "",
-      "modifications": "",
-      "hinge": "",
-      "finishedEnds": "",
-      "isNonDoor": false,
-      "confidence": "high",
-      "notes": "",
-      "sourceHint": "brief location hint, e.g. 'Line 3', 'Page 1 row 5', 'Image 2 row 4' — so the operator can find this line in the original file",
-      "rawComment": "the exact text the dealer wrote on this line, verbatim, so we can audit interpretation"
+      "label": "short tab label, e.g. 'San Ramon' or 'SanRamon' or 'Order 1'",
+      "header": {
+        "date": "",
+        "po": "",
+        "alphaCode": "",
+        "designer": "",
+        "jobName": "",
+        "orderType": "Standard",
+        "construction": "",
+        "deliveryMethod": "Standard Delivery",
+        "billName": "", "billPhone": "", "billStreet": "", "billCity": "",
+        "billState": "", "billZip": "", "billEmail": "",
+        "shipName": "", "shipPhone": "", "shipStreet": "", "shipCity": "",
+        "shipState": "", "shipZip": "", "shipEmail": ""
+      },
+      "lineItems": [
+        {
+          "qty": 1,
+          "sku": "",
+          "itemText": "original text as written",
+          "doorStyle": "",
+          "doorStyleVariant": "",
+          "fsfkFrameType": "",
+          "species": "",
+          "finishType": "",
+          "finishName": "",
+          "glazeColor": "",
+          "glazeTechnique": "",
+          "finishProcess": "",
+          "drawerFrontType": "",
+          "modifications": "",
+          "hinge": "",
+          "finishedEnds": "",
+          "isNonDoor": false,
+          "confidence": "high",
+          "notes": "",
+          "sourceHint": "brief location hint, e.g. 'Line 3', 'Page 1 row 5', 'Image 2 row 4' — so the operator can find this line in the original file",
+          "rawComment": "the exact text the dealer wrote on this line, verbatim, so we can audit interpretation"
+        }
+      ]
     }
   ]
 }`;
@@ -2185,6 +2511,37 @@ function normalizeLines(rawLines) {
     if (DOOR_STYLE_ALIASES[aliasKey]) {
       doorStyle = DOOR_STYLE_ALIASES[aliasKey];
     }
+
+    // FUZZY AUTO-CORRECT for door style misspellings. If the door style isn't
+    // an exact catalog match but is an OBVIOUS misspelling of exactly one
+    // catalog entry (e.g. "Lenior"→"Lenoir", "Gulf breeze"→"Gulfbreeze",
+    // "alantic breeeze"→"Atlantic Breeze"), silently correct it. Only applies
+    // to door-bearing SKUs (SD/SFK/NDR/SMB15/FSFK). Ambiguous near-misses are
+    // left alone so the normal validation flags them.
+    if (doorStyle) {
+      const skuUp = sku.toUpperCase();
+      const isDoorSku = skuUp === 'SD' || skuUp === 'SFK' || skuUp === 'NDR' ||
+                        skuUp === 'SMB15' || skuUp === 'FSFK';
+      if (isDoorSku) {
+        // Pick the candidate list based on SKU: FSFK uses Elite styles,
+        // everything else uses the main catalog.
+        const candidates = skuUp === 'FSFK' ? ELITE_DOOR_STYLES : DOOR_STYLES;
+        const isExactCatalog = candidates.some(c => c.toLowerCase() === doorStyle.toLowerCase());
+        if (!isExactCatalog) {
+          const fm = fuzzyMatch(doorStyle, candidates);
+          if (fm && !fm.exact && !fm.ambiguous) {
+            // Obvious single-candidate misspelling — auto-correct AND record the
+            // original so the line gets a light-verification CHK flag. The
+            // operator sees the populated dropdown and just confirms.
+            l._fuzzyDoorFrom = doorStyle;
+            l._fuzzyDoorTo = fm.match;
+            doorStyle = fm.match;
+          }
+          // If ambiguous or no match, leave doorStyle as-is — validation flags it.
+        }
+      }
+    }
+
     const rawSpecies = (l.species || '').trim();
     let normalizedSpecies = normalizeSpeciesForLine(sku, doorStyle, rawSpecies);
 
@@ -2279,6 +2636,32 @@ function normalizeLines(rawLines) {
       }
     }
 
+    // FUZZY AUTO-CORRECT for finish-name misspellings (e.g. "Expresso"→
+    // "Espresso", "Buttercreme"→"Buttercream"). Only correct when the finish
+    // isn't already an exact match to a known finish AND isn't a known
+    // discontinued finish (we want those flagged, not "corrected" into a
+    // current one). Ambiguous near-misses are left alone.
+    if (cbFinishName) {
+      const fnLower = cbFinishName.toLowerCase();
+      const allFinishes = [...STAIN_FINISHES, ...PAINT_FINISHES, ...TRANSLUCENT_FINISHES];
+      const isExact = allFinishes.some(f => f.toLowerCase() === fnLower);
+      const isDiscontinued = !!DISCONTINUED_FINISHES[fnLower];
+      if (!isExact && !isDiscontinued) {
+        const fm = fuzzyMatch(cbFinishName, allFinishes);
+        if (fm && !fm.exact && !fm.ambiguous) {
+          l._fuzzyFinishFrom = cbFinishName;
+          l._fuzzyFinishTo = fm.match;
+          cbFinishName = fm.match;
+          // Keep finishType consistent with the corrected finish if it was empty
+          if (!cbFinishType) {
+            if (STAIN_FINISHES.includes(fm.match)) cbFinishType = 'Stain';
+            else if (PAINT_FINISHES.includes(fm.match)) cbFinishType = 'Paint';
+            else if (TRANSLUCENT_FINISHES.includes(fm.match)) cbFinishType = 'Translucent Paint';
+          }
+        }
+      }
+    }
+
     return {
       id: 'L' + idx,
       qty: parseInt(l.qty, 10) || 1,
@@ -2320,11 +2703,109 @@ function normalizeLines(rawLines) {
       // sourceFile: original filename like "Samples_42026.xlsm"
       sourceRef: (l.sourceRef || l.sourceHint || '').trim(),
       sourceFile: (l.sourceFile || '').trim(),
+      // Fuzzy-correction markers: if the door style or finish was auto-corrected
+      // from an obvious misspelling, these record the original → corrected values
+      // so the line gets a light-verification flag and the operator sees what changed.
+      _fuzzyDoorFrom: l._fuzzyDoorFrom || '',
+      _fuzzyDoorTo: l._fuzzyDoorTo || '',
+      _fuzzyFinishFrom: l._fuzzyFinishFrom || '',
+      _fuzzyFinishTo: l._fuzzyFinishTo || '',
       // Capture the raw text the AI/parser saw — useful for the feedback report
       // so we can see exactly what the dealer wrote vs what got interpreted.
       rawComment: (l.rawComment || l.itemText || '').trim()
     };
   });
+}
+
+// Render the order-tabs UI at the top of the review screen. Hidden when
+// there's only one logical order. Each tab shows: tab number, the label
+// (e.g. "San Ramon"), and a flag count if there are CHK-flagged lines.
+function renderOrderTabs() {
+  const container = document.getElementById('orderTabsContainer');
+  const tabsDiv = document.getElementById('orderTabs');
+  if (!container || !tabsDiv) return;
+
+  // Refresh the "Generate ALL Orders" button visibility too
+  if (typeof refreshGenerateAllButton === 'function') refreshGenerateAllButton();
+
+  if (!state.logicalOrders || state.logicalOrders.length <= 1) {
+    container.classList.add('hidden');
+    tabsDiv.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+  tabsDiv.innerHTML = '';
+  state.logicalOrders.forEach((order, i) => {
+    const flagCount = order.flags ? order.flags.size : 0;
+    const isActive = i === state.currentOrderIndex;
+    const label = order.label || `Order ${i + 1}`;
+    const tab = document.createElement('button');
+    tab.className = 'order-tab' + (isActive ? ' active' : '');
+    tab.dataset.idx = i;
+    tab.innerHTML = `
+      <span class="tab-num">${i + 1}</span>${escapeHtml(label)}
+      ${flagCount > 0 ? `<span class="tab-flags">${flagCount}</span>` : ''}
+    `;
+    tab.addEventListener('click', () => switchToOrder(i));
+    tabsDiv.appendChild(tab);
+  });
+}
+
+// Switch the review screen to a different logical order. Saves the current
+// order's header (from the form fields), updates currentOrderIndex, repoints
+// the legacy state proxies, and re-renders everything that depends on the
+// active order.
+function switchToOrder(newIndex) {
+  if (newIndex < 0 || newIndex >= state.logicalOrders.length) return;
+  if (newIndex === state.currentOrderIndex) return;
+
+  // Save current form values back to the active order's header before switching
+  saveHeaderToActiveOrder();
+
+  state.currentOrderIndex = newIndex;
+  syncCurrentOrderView();
+
+  // Repopulate the form with the new active order's header
+  prefillReviewScreen({ header: state.logicalOrders[newIndex].header });
+  renderLineTable();
+  renderOrderTabs();
+  updateFlagSummary();
+
+  // Hide the suborders section from any previous Generate click since we're
+  // looking at a different order's data now.
+  const subordersSection = document.getElementById('subordersSection');
+  if (subordersSection) subordersSection.classList.add('hidden');
+}
+
+// Read header form fields back into the active logical order's header.
+// Called when switching tabs, before generating, and on field-change events.
+function saveHeaderToActiveOrder() {
+  if (!state.logicalOrders.length) return;
+  const order = state.logicalOrders[state.currentOrderIndex];
+  if (!order) return;
+  const get = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+  };
+  order.header = {
+    ...order.header,
+    date: get('hDate'),
+    po: get('hPO'),
+    alphaCode: get('hAlpha'),
+    designer: get('hDesigner'),
+    jobName: get('hJob'),
+    orderType: get('hOrderType'),
+    construction: get('hConstruction'),
+    deliveryMethod: get('hDelivery'),
+    billName: get('bName'),
+    billPhone: get('bPhone'),
+    billStreet: get('bStreet'),
+    billCity: get('bCity'),
+    billState: get('bState'),
+    billZip: get('bZip'),
+    billEmail: get('bEmail'),
+  };
 }
 
 function prefillReviewScreen(extracted) {
@@ -2382,6 +2863,14 @@ function getFlagReasons(line) {
   if (line.confidence === 'low' && !line.notes) {
     reasons.push('AI was uncertain about this line — verify everything');
   }
+  // Light-verification flags for auto-corrected misspellings. The field is
+  // already populated with the correction; the operator just confirms it.
+  if (line._fuzzyDoorFrom && line._fuzzyDoorTo) {
+    reasons.push(`Auto-corrected door style spelling: "${line._fuzzyDoorFrom}" → "${line._fuzzyDoorTo}" — verify this is right`);
+  }
+  if (line._fuzzyFinishFrom && line._fuzzyFinishTo) {
+    reasons.push(`Auto-corrected finish spelling: "${line._fuzzyFinishFrom}" → "${line._fuzzyFinishTo}" — verify this is right`);
+  }
   if (!sku) {
     reasons.push('Missing SKU — pick SD, FSFK, or a Part SKU like DDU54, LIT, etc.');
   }
@@ -2395,6 +2884,13 @@ function getFlagReasons(line) {
   if (!isPart) {
     if (!line.species) reasons.push('Missing Species — pick from the dropdown (this is a splitter)');
     if (!line.finishName) reasons.push('Missing Finish — pick from the dropdown (this is a splitter)');
+    // Discontinued finish check — these are no longer offered. Flag clearly so
+    // the operator contacts the dealer for a current substitute, rather than
+    // silently dropping or accepting a finish IC can't actually produce.
+    const finishLower = (line.finishName || '').trim().toLowerCase();
+    if (finishLower && DISCONTINUED_FINISHES[finishLower]) {
+      reasons.push(`Finish "${line.finishName}" is DISCONTINUED — Integrity no longer offers it. Contact the dealer for a current ${DISCONTINUED_FINISHES[finishLower].toLowerCase()} finish, then update this line.`);
+    }
     if (line.doorStyle && !isValidDoorStyleForSku(line.sku, line.doorStyle)) {
       const sku = (line.sku || '').toUpperCase();
       if (sku === 'FSFK') {
@@ -2448,6 +2944,9 @@ function getFlagFields(line) {
   if (!isPart) {
     if (!line.species) fields.add('species');
     if (!line.finishName) fields.add('finish');
+    // Discontinued finish — highlight the finish cell
+    const finishLower = (line.finishName || '').trim().toLowerCase();
+    if (finishLower && DISCONTINUED_FINISHES[finishLower]) fields.add('finish');
     if (line.doorStyle && !isValidDoorStyleForSku(line.sku, line.doorStyle)) fields.add('doorStyle');
     // Combo violation — highlight door style + species + finish so the user
     // can immediately see the three fields that need to harmonize.
@@ -2540,9 +3039,15 @@ function renderLineTable() {
     const cellCls = (field) => flagFields.has(field) ? ' class="flag-cell"' : '';
 
     const selectChecked = (state.selectedForReview && state.selectedForReview.has(i)) ? 'checked' : '';
+    // Inline approve button in the left column — appears only on flagged, not-yet-
+    // approved lines. This lets the operator approve WITHOUT scrolling right to the
+    // Controls column. The far-right approve button still exists as a fallback.
+    const inlineApprove = (flagReasons.length && !line.isNonDoor)
+      ? `<button class="inline-approve-btn" data-act="toggleApproved" title="Approve this line — clears the CHK flag">✓ OK</button>`
+      : '';
     tr.innerHTML = `
       <td style="text-align:center;"><input type="checkbox" class="line-select" data-idx="${i}" ${selectChecked} title="Select for re-examination" /></td>
-      <td>${i + 1}${flagBadge ? '<br>' + flagBadge : ''}</td>
+      <td>${i + 1}${flagBadge ? '<br>' + flagBadge : ''}${inlineApprove ? '<br>' + inlineApprove : ''}</td>
       <td${cellCls('sku')}>${line.isNonDoor ? '—' : renderSkuSelect(line, i)}</td>
       <td class="qty${flagFields.has('qty') ? ' flag-cell' : ''}"><input type="number" min="1" value="${line.qty}" data-f="qty" /></td>
       <td><textarea data-f="itemText" rows="2" style="resize:vertical; min-height:36px;">${escapeHtml(line.itemText)}</textarea></td>
@@ -2574,6 +3079,7 @@ function renderLineTable() {
   // Sync the "Re-examine Selected" button visibility with current selection.
   // Safe to call here because the button exists in the static HTML.
   if (typeof refreshReExamineButton === 'function') refreshReExamineButton();
+  if (typeof refreshApproveAllButton === 'function') refreshApproveAllButton();
 }
 
 function renderFinishProcessSelect(line, i) {
@@ -2883,6 +3389,40 @@ document.getElementById('addLineBtn').addEventListener('click', () => {
   updateFlagSummary();
 });
 
+// "Approve All Flagged" — approves every currently-flagged, non-skipped line
+// at once. Use after eyeballing the auto-corrections. Saves the operator from
+// clicking approve on each line individually.
+document.getElementById('approveAllBtn').addEventListener('click', () => {
+  const flaggedIndices = [...state.flags].filter(i => {
+    const l = state.lines[i];
+    return l && !l.isNonDoor && !l.approved;
+  });
+  if (flaggedIndices.length === 0) {
+    alert('No flagged lines to approve.');
+    return;
+  }
+  if (!confirm(`Approve all ${flaggedIndices.length} flagged line(s)? Do this only after you've glanced at the corrections. You can still un-approve individual lines afterward.`)) {
+    return;
+  }
+  flaggedIndices.forEach(i => { state.lines[i].approved = true; });
+  renderLineTable();
+  updateFlagSummary();
+});
+
+// Keep the "Approve All Flagged (N)" button's count current. Hidden when there
+// are no flagged-and-unapproved lines.
+function refreshApproveAllButton() {
+  const btn = document.getElementById('approveAllBtn');
+  const countEl = document.getElementById('flaggedCount');
+  if (!btn || !countEl) return;
+  const count = [...state.flags].filter(i => {
+    const l = state.lines[i];
+    return l && !l.isNonDoor && !l.approved;
+  }).length;
+  countEl.textContent = count;
+  btn.style.display = count > 0 ? '' : 'none';
+}
+
 /* ============================================================
    RE-EXAMINATION FEATURE
    ============================================================
@@ -2923,6 +3463,19 @@ document.getElementById('lineTableBody').addEventListener('change', (e) => {
   const tr = e.target.closest('tr');
   if (tr) tr.classList.toggle('selected-for-review', e.target.checked);
   refreshReExamineButton();
+});
+
+// Wire all header input fields to save their values back to the active
+// logical order whenever they change. Without this, edits made on one tab
+// would be lost when switching to another. Listeners are passive (no UI side
+// effects) so they're safe to call freely.
+['hDate','hPO','hAlpha','hDesigner','hJob','hOrderType','hConstruction','hDelivery',
+ 'bName','bPhone','bStreet','bCity','bState','bZip','bEmail'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('change', saveHeaderToActiveOrder);
+    el.addEventListener('input', saveHeaderToActiveOrder);
+  }
 });
 
 // Select-all checkbox in the table header
@@ -3261,6 +3814,80 @@ function escapeHtml(s) {
    STEP 3 — SPLIT & OUTPUT
    ============================================================ */
 
+// Show/hide the "Generate ALL Orders" button based on whether we have multiple
+// logical orders. Called whenever the orders array changes.
+function refreshGenerateAllButton() {
+  const btn = document.getElementById('generateAllOrdersBtn');
+  if (!btn) return;
+  btn.style.display = state.logicalOrders.length > 1 ? '' : 'none';
+}
+
+// "Generate ALL Orders" button — processes every logical order in sequence,
+// generating split sub-orders for each, and downloading each order's "merged
+// PDF" (all sub-orders in one PDF, separated by pages) automatically.
+document.getElementById('generateAllOrdersBtn').addEventListener('click', async () => {
+  if (state.logicalOrders.length <= 1) return;
+
+  // Save header for the currently-active order before we walk through all of them
+  saveHeaderToActiveOrder();
+
+  const startingIndex = state.currentOrderIndex;
+  const btn = document.getElementById('generateAllOrdersBtn');
+  const originalText = btn.innerHTML;
+
+  try {
+    btn.disabled = true;
+
+    for (let i = 0; i < state.logicalOrders.length; i++) {
+      btn.innerHTML = `Generating order ${i + 1} of ${state.logicalOrders.length}…`;
+      // Switch to this order so all the read-from-form code sees the right header
+      if (state.currentOrderIndex !== i) {
+        state.currentOrderIndex = i;
+        syncCurrentOrderView();
+        prefillReviewScreen({ header: state.logicalOrders[i].header });
+      }
+
+      const order = state.logicalOrders[i];
+      const activeLines = order.lines.filter(l => !l.isNonDoor);
+      if (activeLines.length === 0) continue;
+
+      const groups = splitOrders(activeLines);
+      order.splitGroups = groups;
+
+      // Build a single merged PDF for this order with one sub-order per page
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+      const basePO = (order.header.po || 'order').trim();
+      groups.forEach((g, gi) => {
+        if (gi > 0) doc.addPage();
+        const subOrderPO = computeSubOrderPO(basePO, gi + 1, groups.length);
+        renderFormIntoPdf(doc, g, gi + 1, groups.length, subOrderPO);
+      });
+      const safeName = (order.label || `Order_${i + 1}`).replace(/[^a-z0-9]/gi, '_');
+      const poSlug = basePO.replace(/[^a-z0-9]/gi, '_');
+      doc.save(`${safeName} - ${poSlug} - ${groups.length} suborders.pdf`);
+      // Small delay so browsers don't drop the second download
+      await new Promise(r => setTimeout(r, 400));
+    }
+
+    // Restore original tab
+    if (state.currentOrderIndex !== startingIndex) {
+      state.currentOrderIndex = startingIndex;
+      syncCurrentOrderView();
+      prefillReviewScreen({ header: state.logicalOrders[startingIndex].header });
+      renderLineTable();
+      renderOrderTabs();
+    }
+    alert(`Generated ${state.logicalOrders.length} order PDFs. Check your downloads folder.`);
+  } catch (err) {
+    console.error('[generate-all]', err);
+    alert('Generate All failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+});
+
 document.getElementById('generateBtn').addEventListener('click', () => {
   const activeLines = state.lines.filter(l => !l.isNonDoor);
   // Parts only need a SKU; SD/FSFK need species + finish.
@@ -3293,7 +3920,15 @@ document.getElementById('generateBtn').addEventListener('click', () => {
     }
   }
 
+  // Save header form values back to the active order before generating
+  saveHeaderToActiveOrder();
+
   const groups = splitOrders(activeLines);
+  state.splitGroups = groups;
+  // Persist to active logical order so generated sub-orders survive tab switches
+  if (state.logicalOrders[state.currentOrderIndex]) {
+    state.logicalOrders[state.currentOrderIndex].splitGroups = groups;
+  }
   renderSuborders(groups);
   document.getElementById('step3').classList.remove('hidden');
   document.getElementById('step3').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3693,6 +4328,10 @@ function renderSuborders(groups) {
   });
 
   state.splitGroups = groups;
+  // Persist to active logical order so they survive tab switches
+  if (state.logicalOrders.length && state.logicalOrders[state.currentOrderIndex]) {
+    state.logicalOrders[state.currentOrderIndex].splitGroups = groups;
+  }
   list.querySelectorAll('button[data-action="download"]').forEach(btn => {
     btn.addEventListener('click', () => {
       const i = +btn.dataset.idx;
@@ -4385,8 +5024,16 @@ document.getElementById('startOverBtn').addEventListener('click', () => {
   state.files = [];
   state.extracted = null;
   state.lines = [];
-  state.flags.clear();
+  state.flags = new Set();
+  state.selectedForReview = new Set();
   state.splitGroups = null;
+  state.originalLines = null;
+  // Multi-order: clear logical orders array too
+  state.logicalOrders = [];
+  state.currentOrderIndex = 0;
+  // Hide tabs container in case it was visible
+  const tabsContainer = document.getElementById('orderTabsContainer');
+  if (tabsContainer) tabsContainer.classList.add('hidden');
   renderThumbs();
   updateExtractBtn();
   document.getElementById('step2').classList.add('hidden');
