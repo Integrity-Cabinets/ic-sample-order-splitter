@@ -136,6 +136,61 @@
   .dropzone .big { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
   .dropzone .small { margin-top: 6px; }
 
+  /* Paste-text block — collapsed by default so it doesn't overwhelm the file
+     upload path. Beth expands it when she has rep-email text to paste. */
+  .paste-block {
+    margin-top: 20px;
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    background: #fafaf6;
+  }
+  .paste-block-header {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .paste-block-header label { font-family: 'Helvetica Neue', sans-serif; font-size: 13px; color: var(--ink); }
+  .paste-toggle {
+    background: transparent;
+    border: 1px solid var(--line-soft);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--ink);
+    cursor: pointer;
+    border-radius: 3px;
+    font-family: 'Helvetica Neue', sans-serif;
+    letter-spacing: 0.05em;
+  }
+  .paste-toggle:hover { border-color: var(--accent); }
+  .paste-block-body { padding: 0 16px 14px; }
+  .paste-block-body.hidden { display: none; }
+  .paste-block-body textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 10px;
+    border: 1px solid var(--line-soft);
+    border-radius: 3px;
+    resize: vertical;
+    min-height: 140px;
+  }
+  .paste-block-body textarea:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+  .paste-block-footer {
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'Helvetica Neue', sans-serif;
+  }
+
   .thumbs {
     display: flex; flex-wrap: wrap; gap: 12px;
     margin-top: 16px;
@@ -671,6 +726,21 @@
 
     <div class="thumbs" id="thumbs"></div>
 
+    <!-- Paste-text alternative for rep emails and freeform lists -->
+    <div class="paste-block" id="pasteBlock">
+      <div class="paste-block-header">
+        <label for="pasteInput"><strong>Or paste text</strong> — email body, plain list, anything with line items</label>
+        <button type="button" class="paste-toggle" id="pasteToggle" aria-expanded="false">Show ▾</button>
+      </div>
+      <div class="paste-block-body hidden" id="pasteBody">
+        <textarea id="pasteInput" placeholder="Paste rep emails, sample lists, or any freeform order text here. Multiple orders with different ship-tos will be auto-split." rows="8"></textarea>
+        <div class="paste-block-footer">
+          <span class="small" id="pasteHint">Empty — nothing will be extracted</span>
+          <button type="button" class="secondary" id="pasteClearBtn">Clear</button>
+        </div>
+      </div>
+    </div>
+
     <div style="margin-top:20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <button class="primary" id="extractBtn" disabled>Extract Order Data</button>
       <span class="small" id="extractHint">Upload at least one image to continue.</span>
@@ -999,7 +1069,7 @@ const STAIN_RULES = {
   "Ebony": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Espresso": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Light": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
-  "Medium": ['Oak', 'Maple', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
+  "Medium": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Natural": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Sahara": ['Oak', 'Maple', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Smoke": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak']
@@ -1289,6 +1359,10 @@ const NON_DOOR_SKUS = [
 // call syncCurrentOrderView() to repoint the legacy fields.
 const state = {
   files: [],           // {name, dataUrl, mediaType, kind}
+  // Snapshot of the pasted text that produced the current extraction. Kept so
+  // that re-examination (which needs the original input) can be re-run against
+  // pasted text just like it can against files.
+  pastedTextSnapshot: '',
 
   // === Multi-order data (new) ===
   logicalOrders: [],   // array of LogicalOrder objects (see makeLogicalOrder())
@@ -1429,6 +1503,59 @@ dropzone.addEventListener('drop', e => {
 });
 fileInput.addEventListener('change', e => handleFiles(e.target.files));
 
+// === PASTE-TEXT INPUT ===
+// Rep emails, plain-text sample lists, and any freeform order text can be pasted
+// directly instead of uploading a file. The pasted text flows into the SAME
+// AI-extraction pipeline as PDFs/images (see runExtraction), so multi-order
+// detection, shorthand parsing, and ship-to extraction all work identically.
+const pasteToggle = document.getElementById('pasteToggle');
+const pasteBody = document.getElementById('pasteBody');
+const pasteInput = document.getElementById('pasteInput');
+const pasteHint = document.getElementById('pasteHint');
+const pasteClearBtn = document.getElementById('pasteClearBtn');
+
+pasteToggle.addEventListener('click', () => {
+  const isHidden = pasteBody.classList.toggle('hidden');
+  pasteToggle.setAttribute('aria-expanded', String(!isHidden));
+  pasteToggle.textContent = isHidden ? 'Show ▾' : 'Hide ▴';
+  if (!isHidden) pasteInput.focus();
+});
+
+function getPastedText() {
+  return (pasteInput.value || '').trim();
+}
+
+function refreshPasteHint() {
+  const txt = getPastedText();
+  if (txt.length === 0) {
+    pasteHint.textContent = 'Empty — nothing will be extracted';
+  } else {
+    const lines = txt.split('\n').filter(l => l.trim()).length;
+    pasteHint.textContent = `${txt.length.toLocaleString()} chars, ${lines} non-empty line${lines === 1 ? '' : 's'} — will be sent to the AI`;
+  }
+}
+
+pasteInput.addEventListener('input', () => {
+  refreshPasteHint();
+  updateExtractBtn();
+});
+
+pasteClearBtn.addEventListener('click', () => {
+  pasteInput.value = '';
+  refreshPasteHint();
+  updateExtractBtn();
+});
+
+// Auto-expand the paste block if the user pastes into a collapsed area
+// (via keyboard shortcut, doesn't matter here since it's collapsed), or if
+// the field has any content on load.
+if (pasteInput.value.trim()) {
+  pasteBody.classList.remove('hidden');
+  pasteToggle.textContent = 'Hide ▴';
+  pasteToggle.setAttribute('aria-expanded', 'true');
+}
+refreshPasteHint();
+
 async function handleFiles(list) {
   for (const file of list) {
     const isImage = file.type.startsWith('image/');
@@ -1494,10 +1621,11 @@ function renderThumbs() {
 }
 
 function updateExtractBtn() {
-  const ok = state.files.length > 0;
+  const pastedText = getPastedText();
+  const ok = state.files.length > 0 || pastedText.length > 0;
   extractBtn.disabled = !ok;
   if (!ok) {
-    extractHint.textContent = 'Upload at least one file to continue.';
+    extractHint.textContent = 'Upload at least one file, or paste text, to continue.';
     return;
   }
   const counts = { excel: 0, pdf: 0, image: 0 };
@@ -1506,11 +1634,12 @@ function updateExtractBtn() {
   if (counts.excel) parts.push(`${counts.excel} Excel`);
   if (counts.pdf) parts.push(`${counts.pdf} PDF`);
   if (counts.image) parts.push(`${counts.image} image${counts.image === 1 ? '' : 's'}`);
+  if (pastedText.length > 0) parts.push(`${pastedText.length.toLocaleString()} chars of pasted text`);
   let hint = parts.join(' + ') + ' ready.';
-  if (counts.excel > 0 && counts.pdf === 0 && counts.image === 0) {
+  if (counts.excel > 0 && counts.pdf === 0 && counts.image === 0 && pastedText.length === 0) {
     hint += ' Excel files parse locally — no API cost.';
-  } else if (counts.excel > 0) {
-    hint += ' Excel parses locally; PDFs/images use the API.';
+  } else if (counts.excel > 0 || pastedText.length > 0) {
+    hint += ' Excel parses locally; PDFs/images/pasted text use the API.';
   }
   extractHint.textContent = hint;
 }
@@ -1561,20 +1690,28 @@ async function runExtraction() {
       }
     }
 
-    // For PDF/image files, hit the API
-    if (aiFiles.length > 0) {
+    // For PDF/image files OR pasted text, hit the API. Pasted text is added
+    // as a text content block alongside any files — same call, same model,
+    // same prompt. The AI's own multi-order detection handles the case where
+    // pasted text contains multiple ship-tos.
+    const pastedText = getPastedText();
+    // Snapshot for re-examination purposes (see runReExamination)
+    state.pastedTextSnapshot = pastedText;
+    if (aiFiles.length > 0 || pastedText.length > 0) {
       const key = (localStorage.getItem('ic_claude_key') || apiKeyInput.value || '').trim();
       if (!key) {
-        showExtractError('No API key configured for non-Excel files. Click "admin" in the top box to set one up, or upload only Excel files.');
+        showExtractError('No API key configured for non-Excel input. Click "admin" in the top box to set one up, or upload only Excel files.');
         return;
       }
       if (!key.startsWith('sk-ant-')) {
         showExtractError('Saved API key looks wrong — it should start with "sk-ant-". An admin will need to fix it.');
         return;
       }
-      setStatus('Sending PDF/images to Claude API…');
+      const label = aiFiles.length > 0 && pastedText.length > 0 ? 'PDF/images + pasted text'
+                  : aiFiles.length > 0 ? 'PDF/images' : 'pasted text';
+      setStatus(`Sending ${label} to Claude API…`);
       setProgress(50);
-      const aiResult = await callClaudeVision(key, aiFiles);
+      const aiResult = await callClaudeVision(key, aiFiles, pastedText);
       console.log('[extract] AI returned:', aiResult);
 
       // The AI now returns { logicalOrders: [...] }. Backward-compat: if it
@@ -1632,11 +1769,12 @@ async function runExtraction() {
       throw new Error('No line items found in any of the files.');
     }
 
-    // Auto-flag low-confidence lines in EVERY logical order
+    // Auto-flag any line with validation issues (including CBs, which have
+    // their own species×finish rules). Also flag low/medium-confidence lines
+    // even if they have no other validation issues — the AI was unsure.
     for (const order of state.logicalOrders) {
       order.lines.forEach((l, i) => {
-        const isPart = l.sku && l.sku !== 'SD' && l.sku !== 'SFK' && l.sku !== 'NDR' && l.sku !== 'SMB15' && l.sku !== 'FSFK';
-        if (!isPart && getFlagReasons(l).length > 0) order.flags.add(i);
+        if (getFlagReasons(l).length > 0) order.flags.add(i);
         else if (l.confidence === 'low' || l.confidence === 'medium') order.flags.add(i);
       });
     }
@@ -1687,15 +1825,62 @@ async function runExtraction() {
    EXCEL PARSING — for the "IC ORDER FORM" workbook layout
    ============================================================ */
 
+// Dispatch: detect which Excel format we're looking at and route to the right
+// parser. Two formats are currently supported:
+//   1. The IC Order Form template (fixed cell layout — header in K2/D6/S4..S12,
+//      line items starting at row 17). Detected by sheet name "IC ORDER FORM"
+//      or by finding the signature header label cells.
+//   2. A flexible columnar layout (any sheet with a row of column headers like
+//      "QTY | Item | Door Style | Wood | Color | Paint/Stain"). Used for Sales
+//      Aids forms, internal templates, and any tabular spreadsheet someone
+//      throws at us.
 async function parseExcelOrderForm(file) {
   console.log('[excel] parsing', file.name);
   const arrayBuffer = await file.arrayBuffer();
   const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
 
-  // Find the order form sheet — the canonical name is "IC ORDER FORM"
-  // but be tolerant of small variations.
-  let sheetName = wb.SheetNames.find(n => /ic\s*order\s*form/i.test(n));
-  if (!sheetName) sheetName = wb.SheetNames[0];
+  // First check: is this an IC Order Form template?
+  const icSheetName = wb.SheetNames.find(n => /ic\s*order\s*form/i.test(n));
+  if (icSheetName) {
+    console.log('[excel] detected IC Order Form template');
+    return parseICOrderFormExcel(wb, icSheetName);
+  }
+
+  // Heuristic: look at every sheet for the IC Order Form signature (cell K1 or
+  // K2 contains "PO" / "PURCHASE ORDER", D6 has a customer name pattern). If
+  // we find it, treat it as IC Order Form.
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    const k1 = ws['K1'] ? String(ws['K1'].v || '').toUpperCase() : '';
+    const k2 = ws['K2'] ? String(ws['K2'].v || '').toUpperCase() : '';
+    if (k1.includes('PO') || k2.includes('PO') || /purchase\s*order/i.test(k1 + k2)) {
+      console.log(`[excel] sheet "${name}" looks like IC Order Form (PO marker in K1/K2)`);
+      return parseICOrderFormExcel(wb, name);
+    }
+  }
+
+  // Fall back to flexible columnar parsing — scan every sheet for a header row
+  // we can recognize. Return the first sheet that parses successfully.
+  for (const name of wb.SheetNames) {
+    const result = parseFlexibleColumnarExcel(wb.Sheets[name], name);
+    if (result && result.lineItems.length > 0) {
+      console.log(`[excel] sheet "${name}" parsed as flexible columnar — ${result.lineItems.length} lines`);
+      return result;
+    }
+  }
+
+  // If nothing parsed, return an empty result so the caller's "no line items"
+  // error fires. We deliberately do NOT throw — the caller may have other
+  // files (PDFs, images) that still work.
+  console.log('[excel] no recognized format on any sheet');
+  return { header: {}, lineItems: [] };
+}
+
+// === IC ORDER FORM PARSER (fixed cell layout) ===
+// Original parser for the canonical IC Order Form template. Cell positions are
+// hardcoded based on the template — DO NOT change them without updating the
+// template, since dealers fill these exact cells.
+async function parseICOrderFormExcel(wb, sheetName) {
   const ws = wb.Sheets[sheetName];
   if (!ws) throw new Error('Workbook has no sheets');
 
@@ -1830,6 +2015,178 @@ async function parseExcelOrderForm(file) {
 
   console.log(`[excel] extracted header + ${lineItems.length} lines from "${sheetName}"`);
   return { header, lineItems };
+}
+
+// === FLEXIBLE COLUMNAR PARSER ===
+// Reads any spreadsheet that has a row of recognizable column headers followed
+// by tabular line-item data. Examples: the "Sales Aids" form (QTY/Item #/Door
+// Style/Drawer Style/Wood/Color/Paint-Stain), and any future tabular template.
+//
+// Strategy:
+//   1. Scan the first ~15 rows looking for a row that contains at least 2-3
+//      header-name patterns we recognize. That's the header row.
+//   2. Map each header column to a canonical field name.
+//   3. Read data rows below the header until we hit a totals/subtotals row or
+//      run out of meaningful data.
+//
+// Header recognition is intentionally fuzzy: it matches "Wood", "Wood Species",
+// or "Species" to the species column; "Color", "Finish", "Finish Name" all
+// match the finish column; "Item", "Item #", "SKU", "Cabinet" all match SKU.
+function parseFlexibleColumnarExcel(ws, sheetName) {
+  if (!ws) return null;
+  const ref = ws['!ref'];
+  if (!ref) return null;
+
+  const range = XLSX.utils.decode_range(ref);
+  const maxScanRow = Math.min(range.s.r + 15, range.e.r);
+  const cellAt = (r, c) => {
+    const addr = XLSX.utils.encode_cell({ r, c });
+    const cell = ws[addr];
+    if (!cell) return '';
+    return (cell.v === null || cell.v === undefined) ? '' : String(cell.v).trim();
+  };
+
+  // Canonical field → list of header text patterns that should map to it.
+  // Order matters: longer/more-specific patterns checked first.
+  // Each entry is { field, patterns: [regex...] }.
+  const FIELD_PATTERNS = [
+    { field: 'qty',          patterns: [/^qty\.?$/i, /^quantity$/i] },
+    { field: 'sku',          patterns: [/^item\s*#?$/i, /^sku$/i, /^cabinet$/i, /^cab\.?$/i, /^code$/i] },
+    { field: 'doorStyle',    patterns: [/^door\s*style$/i, /^door$/i, /^style$/i] },
+    { field: 'drawerFront',  patterns: [/^drawer\s*style$/i, /^drawer\s*front$/i, /^df$/i, /^drawer$/i] },
+    { field: 'species',      patterns: [/^wood\s*species$/i, /^wood$/i, /^species$/i, /^material$/i] },
+    { field: 'finishName',   patterns: [/^finish\s*name$/i, /^color\s*name$/i, /^color$/i, /^finish$/i] },
+    { field: 'finishType',   patterns: [/^paint\s*\/?\s*stain$/i, /^finish\s*type$/i, /^paint\s*or\s*stain$/i, /^type$/i] },
+    { field: 'glazeColor',   patterns: [/^glaze\s*color$/i, /^glaze$/i] },
+    { field: 'glazeTechnique', patterns: [/^glaze\s*technique$/i, /^technique$/i] },
+    { field: 'finishProcess',  patterns: [/^finish\s*process$/i, /^process$/i] },
+    { field: 'modifications',  patterns: [/^modifications?$/i, /^modify$/i, /^mod$/i, /^description$/i, /^comments?$/i, /^instructions?$/i, /^notes?$/i] },
+    { field: 'extPrice',     patterns: [/^ext.*price$/i, /^extended.*price$/i, /^list$/i, /^price$/i, /^total$/i] },
+    { field: 'lineNum',      patterns: [/^line$/i, /^line\s*#?$/i, /^#$/i] },
+  ];
+
+  // Find the header row: the row with the most matched canonical fields.
+  let bestHeaderRow = -1;
+  let bestColumnMap = null;
+  let bestMatchCount = 0;
+  for (let r = range.s.r; r <= maxScanRow; r++) {
+    const colMap = {};
+    let matchCount = 0;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const txt = cellAt(r, c);
+      if (!txt) continue;
+      for (const { field, patterns } of FIELD_PATTERNS) {
+        if (colMap[field] !== undefined) continue;  // already assigned
+        if (patterns.some(p => p.test(txt))) {
+          colMap[field] = c;
+          matchCount++;
+          break;
+        }
+      }
+    }
+    // Require at least 3 known columns to consider this a header row, and at
+    // least one of {sku, doorStyle, species} so we don't latch onto a row of
+    // numbers-with-headers like a summary table.
+    const hasSubstantive = colMap.sku !== undefined ||
+                            colMap.doorStyle !== undefined ||
+                            colMap.species !== undefined;
+    if (matchCount >= 3 && hasSubstantive && matchCount > bestMatchCount) {
+      bestMatchCount = matchCount;
+      bestHeaderRow = r;
+      bestColumnMap = colMap;
+    }
+  }
+
+  if (bestHeaderRow < 0) {
+    console.log(`[excel] sheet "${sheetName}" — no recognizable header row in first ${maxScanRow + 1} rows`);
+    return null;
+  }
+  console.log(`[excel] sheet "${sheetName}" — header on row ${bestHeaderRow + 1}, ${bestMatchCount} mapped columns:`, bestColumnMap);
+
+  // Read line items below the header row.
+  const lineItems = [];
+  for (let r = bestHeaderRow + 1; r <= range.e.r; r++) {
+    // Read every mapped column for this row
+    const rowValues = {};
+    for (const [field, col] of Object.entries(bestColumnMap)) {
+      rowValues[field] = cellAt(r, col);
+    }
+
+    // Stop conditions: rows that look like totals/subtotals/footers.
+    // Check the leftmost few cells for telltale words.
+    const firstCellsText = [];
+    for (let c = range.s.c; c <= Math.min(range.s.c + 3, range.e.c); c++) {
+      firstCellsText.push(cellAt(r, c).toLowerCase());
+    }
+    const joined = firstCellsText.join(' ');
+    if (/\b(subtotal|total|grand\s*total|multiplier|sum)\b/i.test(joined)) {
+      console.log(`[excel] stopping at row ${r + 1} — looks like a totals row: "${joined.trim()}"`);
+      break;
+    }
+
+    // Skip blank rows (all relevant cells empty)
+    const hasAnyContent = ['sku','doorStyle','species','finishName','modifications']
+      .some(f => rowValues[f] && rowValues[f].trim());
+    if (!hasAnyContent) continue;
+
+    // SKU is required to call this a line item
+    const sku = (rowValues.sku || '').trim().toUpperCase();
+    if (!sku) continue;
+
+    // Determine finishType: normalize common values to our canonical labels.
+    let finishType = (rowValues.finishType || '').trim();
+    const ftLower = finishType.toLowerCase();
+    if (/translucent/i.test(ftLower)) finishType = 'Translucent Paint';
+    else if (/paint/i.test(ftLower)) finishType = 'Paint';
+    else if (/stain/i.test(ftLower)) finishType = 'Stain';
+
+    // Build itemText: a compact human-readable description so the row makes
+    // sense at a glance in the review table.
+    const textParts = [];
+    if (rowValues.doorStyle) textParts.push(rowValues.doorStyle);
+    if (rowValues.species) textParts.push(rowValues.species);
+    if (rowValues.finishName) textParts.push(rowValues.finishName);
+    if (rowValues.modifications) textParts.push(rowValues.modifications);
+    const itemText = textParts.join(' ').trim();
+
+    // Determine confidence — flag low if any required field is missing for
+    // door-bearing SKUs. Parts (CB, CBSET, LIT, etc.) don't need door style.
+    const isDoorSku = ['SD', 'SFK', 'NDR', 'SMB15', 'FSFK'].includes(sku);
+    const incomplete = isDoorSku && (!rowValues.doorStyle || !rowValues.species || !rowValues.finishName);
+    const confidence = incomplete ? 'low' : 'high';
+
+    // Normalize drawer front type to canonical "5PC" or "Slab" values that the
+    // splitter expects. Forms write things like "5 PC Drawer", "5PDF", "5-pc",
+    // "Slab", "Slab Drawer", etc. Anything not recognized stays as-written and
+    // gets flagged downstream.
+    let drawerFrontType = (rowValues.drawerFront || '').trim();
+    const dfLower = drawerFrontType.toLowerCase();
+    if (/5\s*pc|5\s*pdf|5\s*piece|5pdf/.test(dfLower)) drawerFrontType = '5PC';
+    else if (/^slab|^flat/i.test(dfLower)) drawerFrontType = 'Slab';
+
+    lineItems.push({
+      qty: parseInt(rowValues.qty, 10) || 1,
+      sku,
+      itemText,
+      doorStyle: (rowValues.doorStyle || '').trim(),
+      species: (rowValues.species || '').trim(),
+      finishName: (rowValues.finishName || '').trim(),
+      finishType,
+      glazeColor: (rowValues.glazeColor || '').trim(),
+      glazeTechnique: (rowValues.glazeTechnique || '').trim(),
+      finishProcess: (rowValues.finishProcess || '').trim(),
+      drawerFrontType,
+      modifications: (rowValues.modifications || '').trim(),
+      confidence,
+      notes: '',
+      sourceHint: `${sheetName} row ${r + 1}`,
+      rawComment: itemText
+    });
+  }
+
+  console.log(`[excel] flexible parser extracted ${lineItems.length} lines from "${sheetName}"`);
+  // No header info from flexible-format files — operator fills in PO/customer manually
+  return { header: {}, lineItems };
 }
 
 // Parse a free-text comment like "Maple Aruba snow" into structured fields by
@@ -1973,7 +2330,7 @@ function showExtractError(msg) {
    CLAUDE VISION API CALL
    ============================================================ */
 
-async function callClaudeVision(apiKey, files) {
+async function callClaudeVision(apiKey, files, pastedText = '') {
   const systemPrompt = `You are a data extraction assistant for Integrity Cabinets, a cabinet manufacturer. You are given an order document — this could be:
 - A handwritten order form (photo)
 - An interactive PDF order form filled out by a dealer
@@ -2013,6 +2370,8 @@ TRANSLUCENT_FINISHES: ${TRANSLUCENT_FINISHES.join(", ")}
 GLAZE_COLORS: ${GLAZE_COLORS.join(", ")}
 GLAZE_TECHNIQUES: ${GLAZE_TECHNIQUES.join(", ")}
 
+MADISON / MONTEREY WIPING STAIN RULE: The Madison and Monterey door styles ALWAYS receive a wiping stain. If a Madison or Monterey line has no glaze specified, set glazeTechnique to "Hand Wipe" and glazeColor to "Black" (the standard default). If the dealer explicitly wrote a glaze technique or color, keep what they wrote.
+
 DISCONTINUED FINISHES: ${Object.keys(DISCONTINUED_FINISHES).join(", ")}. These finishes are no longer offered but dealers sometimes still order them. If you see one, STILL capture it exactly as written in the finishName field and set confidence to "low" with a note like "discontinued finish". DO NOT mark the line as isNonDoor, DO NOT silently substitute a different finish, and DO NOT drop the line. The operator needs to see the discontinued finish so they can contact the dealer. The tool will flag it automatically.
 
 PARTS / OTHER SKUs: Anything that is not "SD", "SFK", or "FSFK" is a "Part" — examples: DDU54 (Door Display Unit), LIT (Literature), ES LIT, TKIT (Tool Kit), KIT, CBSET (Color Block Set), MOLDING SET, PRICE, ACCESSORY, HARDWARE. Extract these normally with their SKU, qty, and itemText. They DO NOT need a doorStyle, species, or finish — leave those blank. They get split into their own orders by SKU. Set isNonDoor=false for these (it's only for items the user wants to manually exclude from the output entirely).
@@ -2024,6 +2383,7 @@ CB (Color Block) — SPECIAL CASE: The bare SKU "CB" is a single-finish color bl
 - For stains on White Oak (e.g., "White Oak-Natural", "White Oak-Light", "White Oak-Medium", "White Oak-Dark", "White Oak-Cappuccino"), put species: "White Oak" and finishName: the stain (Natural/Light/Medium/Dark/Cappuccino)
 - Leave doorStyle empty
 - The tool routes CB lines into the Paint Parts or Stain Parts bucket based on finishType
+- CBs follow the EXACT same species×finish rules as Sample Doors. The same finish can't go on every species. For example: Mystic Beige is Cherry-only; Antique White/Bayou Mist/Wheat are NOT available on Cherry; Driftwood is NOT on Red Oak; Wheat is only on White Oak/Rift White Oak. Capture what the dealer wrote (so the rep gets the correct flag), but expect the tool to flag invalid combinations for the operator to resolve.
 
 QUANTITY MARK-OUTS: Handwritten orders sometimes have crossed-out or scribbled-over quantities (e.g., a "2" with "3" written next to or over it). When you see ANY indication of a markout, correction, or unclear digit in the qty field:
 - Use your best interpretation of the FINAL written value (usually the most recent / clearer mark)
@@ -2117,6 +2477,28 @@ For each line item, set "confidence": "high", "medium", or "low".
 - low = illegible, ambiguous, or doesn't match any reference value
 Set confidence to "low" for any field you had to guess.
 
+FREE-TEXT / PASTED INPUT (rep emails, plain-text sample lists):
+When the input includes a <pasted_text> block (usually a rep email or plain list), treat every non-empty line as potentially a line item. These inputs are terse and shorthand-heavy. Common patterns:
+
+- "1-Aruba Maple Cavern" or "1 Aruba Maple Cavern" — qty 1, SD Aruba Maple w/ Cavern stain. The leading number is the QUANTITY; strip it. Default the SKU to "SD" when the line starts with a number and a door style. Extract door style, species, finish from the remaining words.
+- "3-SD Bella Maple Snow" — qty 3, SKU explicitly SD, Bella / Maple / Snow.
+- "1-Bentley SRP Cherry Expresso" — door style can include suffixes like "SRP" (Slab Reverse Panel) or "FO" (Full Overlay). Keep them with the door style.
+- "1-Jamestown Maple Jade w/black pen" — the "w/black pen" is a modification note. Put it in the modifications field, not the finishName. finishName is just "Jade".
+- "4-packs of Pro/Classic Brochures" or "4-packs of Elite Brochures" — qty 4, SKU "LIT" (literature). Set itemText to describe which pack (e.g. "Pro/Classic Brochures" or "Elite Brochures").
+- "4 complete sets of color samples (stains and paints)" or "Complete set of paint and stain samples" — this is a CBSET line. Set SKU to "CBSET" with qty as written (default 1 if not specified).
+- "Ship to address:" or "Ship to:" followed by an address on the next lines → that's the ship-to for the current order. Populate shipStreet / shipCity / shipState / shipZip. The "Name" line before or nearby is likely the customer/company name — put it in shipName.
+- If you see a customer NAME line like "Suburban Kitchens" or "Chic Lumber" (a company name written on its own line, usually before the address), that's the shipName.
+- "Attn: Mike Dermitzakis" — that's an attention line, put it in shipName too if no other name was given, otherwise capture as a note.
+- Blank lines are separators, not line items. Ignore them.
+- Text like "Hey Beth", "Please send me the following", "for my sales calls", "I need the following", etc. is prose framing. Ignore.
+
+WHEN THE PASTED TEXT CONTAINS TWO SEPARATE ORDERS: A single pasted block often contains TWO complete orders — one after the other — with different ship-tos. This is very common in rep emails where the rep asks for "these samples for me" AND "these samples for a dealer". Look for signals like:
+- A second "Ship to:" or "I need the following sent to..."
+- A blank line or two followed by a fresh set of items and a fresh address
+- A phrase like "sent to a truckload dealer that I'm trying to get set up"
+- Distinct addresses appearing at different points in the text
+When you see these signals, split into MULTIPLE logical orders using the same rules as multi-page uploads.
+
 MULTIPLE LOGICAL ORDERS IN ONE UPLOAD — CRITICAL:
 A single upload may contain MULTIPLE independent orders that must be processed separately. Each is a "logical order" with its own PO#, ship-to address, and line items. Detect this when you see EITHER signal:
 - Different PO numbers on different pages (e.g. "Samples - SanRamon" on page 1, "Samples - Roseville" on page 2)
@@ -2205,6 +2587,20 @@ Output ONLY valid JSON. No markdown, no prose, no code fences. Exactly this stru
       });
     }
   }
+  // If the user pasted free-text (rep email, sample list, etc.), add it as a
+  // dedicated text block BEFORE the extract instruction. Delimit with an
+  // XML-style tag so the model can distinguish it from other text.
+  if (pastedText && pastedText.trim()) {
+    content.push({
+      type: "text",
+      text: `The following is pasted text (usually a rep email or freeform sample list). Extract line items and header info from it the same way you would from a document. Watch for embedded ship-to addresses and multiple separate orders in the same text.
+
+<pasted_text>
+${pastedText.trim()}
+</pasted_text>`
+    });
+  }
+
   content.push({
     type: "text",
     text: "Extract every line item from this sample order. Return only the JSON object specified in your instructions."
@@ -2564,18 +2960,42 @@ function normalizeLines(rawLines) {
       const desc = itemText.replace(/^\s*CB\s+/i, '').trim();
       // Try to recognize "Species-Finish" or "Species Finish" patterns first.
       // Species names with spaces (White Oak, Knotty Hickory, Rift White Oak,
-      // Rift Red Oak) need to match before single-word species so the longer
-      // names take precedence.
+      // Rift Red Oak, Red Oak) need to match before single-word species so the
+      // longer names take precedence.
+      //
+      // "Red Oak" is a dealer-friendly alias for our internal "Oak" species —
+      // when we see it, we use "Oak" as the canonical species (matches what
+      // STAIN_RULES / PAINT_RULES / TRANSLUCENT_PAINT_RULES expect).
       const speciesList = [
         'Knotty Hickory', 'Rift White Oak', 'Rift Red Oak',
-        'White Oak', 'Maple', 'Cherry', 'Hickory', 'Oak', 'MDF'
+        'White Oak', 'Red Oak', 'Maple', 'Cherry', 'Hickory', 'Oak', 'MDF'
       ];
+      // Map dealer-written species names to canonical species used in the rules.
+      const speciesCanonicalize = (s) => s === 'Red Oak' ? 'Oak' : s;
       let speciesMatch = '', finishPart = '';
       for (const sp of speciesList) {
-        // Allow "White Oak-Natural", "White Oak Natural", "WhiteOak-Natural"
-        const re = new RegExp(`^${sp.replace(/\s+/g, '\\s*')}\\s*[- ]\\s*(.+)$`, 'i');
+        // Allow many separators between species and finish:
+        //   "White Oak-Natural" (hyphen)
+        //   "White Oak Natural" (space)
+        //   "Cherry w/ Antique White" (w/)
+        //   "Cherry / Wheat" (slash)
+        //   "Cherry with Wheat" (the word "with")
+        // The character class [-/\s] plus optional "w/" or "with" handles all
+        // observed dealer notations. The captured group is just the finish name.
+        const re = new RegExp(
+          `^${sp.replace(/\s+/g, '\\s*')}\\s*(?:w\\s*/|with|[-/])?\\s*(.+)$`,
+          'i'
+        );
         const m = desc.match(re);
-        if (m) { speciesMatch = sp; finishPart = m[1].trim(); break; }
+        if (m) {
+          speciesMatch = speciesCanonicalize(sp);
+          finishPart = m[1].trim();
+          // Defensive cleanup: if the separator slipped into the finish part
+          // (e.g. the regex matched the species but not the separator), strip
+          // any leading separator chars from the finish name.
+          finishPart = finishPart.replace(/^(?:w\s*\/|with|[-/])\s*/i, '').trim();
+          break;
+        }
       }
 
       if (speciesMatch) {
@@ -2607,13 +3027,23 @@ function normalizeLines(rawLines) {
     // is no longer triggered because the species is corrected before it runs.
     // Rule applies to SD and SFK. Stains on these doors are left alone (they'll
     // be caught by the regular validation rules if the species is wrong).
+    //
+    // IMPORTANT: Translucent finishes (Autumn Bronze, Antique White, Bayou Mist,
+    // Mystic Beige, Wheat) are NOT coerced even though they live under
+    // "paint" finishType. Translucents let the wood species show through, so
+    // Atlantis-White-Oak-Autumn-Bronze is a real configuration the dealer
+    // genuinely wants — keep the species the dealer wrote.
     {
       const skuUp = sku.toUpperCase();
       const isSdLike = skuUp === 'SD' || skuUp === 'SFK' || skuUp === 'NDR';
       const dsLower = (doorStyle || '').toLowerCase();
       const finishCat = cbFinishType || (l.finishType || '').trim();
-      const isPaint = /paint/i.test(finishCat) || PAINT_FINISHES.includes(cbFinishName) ||
-                      TRANSLUCENT_FINISHES.includes(cbFinishName);
+      const isTranslucent = /translucent/i.test(finishCat) ||
+                            TRANSLUCENT_FINISHES.includes(cbFinishName);
+      const isPaint = !isTranslucent && (
+                        /paint/i.test(finishCat) ||
+                        PAINT_FINISHES.includes(cbFinishName)
+                      );
       if (isSdLike && PAINT_MDF_ONLY_DOOR_STYLES.has(dsLower) && isPaint &&
           normalizedSpecies && normalizedSpecies.toLowerCase() !== 'mdf') {
         normalizedSpecies = 'MDF';
@@ -2633,6 +3063,29 @@ function normalizeLines(rawLines) {
       const speciesLower = (normalizedSpecies || '').toLowerCase();
       if (skuUp === 'FSFK' && speciesLower === 'mdf') {
         normalizedSpecies = 'Maple';
+      }
+    }
+
+    // Field-feedback rule: Madison and Monterey MUST receive a wiping stain.
+    // If the dealer didn't specify a glaze (or wrote "None"), default to the
+    // standard Black hand-wipe. If the dealer explicitly specified a glaze
+    // technique/color, respect what they wrote — this only fills the gap.
+    // Applies to door-bearing SKUs (SD/SFK/NDR); Madison and Monterey are
+    // not Elite styles so FSFK never carries them.
+    {
+      const skuUp = sku.toUpperCase();
+      const isDoorSku = skuUp === 'SD' || skuUp === 'SFK' || skuUp === 'NDR';
+      const dsLower = (doorStyle || '').trim().toLowerCase();
+      if (isDoorSku && (dsLower === 'madison' || dsLower === 'monterey')) {
+        const tech = (l.glazeTechnique || '').trim();
+        const color = (l.glazeColor || '').trim();
+        const noTech = !tech || /^none$/i.test(tech) || /^no\s*glaze$/i.test(tech);
+        if (noTech) {
+          l.glazeTechnique = 'Hand Wipe';
+          if (!color || /^none$/i.test(color) || /^no\s*glaze$/i.test(color)) {
+            l.glazeColor = 'Black';
+          }
+        }
       }
     }
 
@@ -2826,24 +3279,14 @@ function prefillReviewScreen(extracted) {
   document.getElementById('bZip').value = h.billZip || '';
   document.getElementById('bEmail').value = h.billEmail || '';
 
-  // flag low-confidence lines
+  // flag any line with validation issues. getFlagReasons covers SD/SFK/NDR/
+  // SMB15/FSFK AND CB validation, so we call it once per line.
   state.flags.clear();
   state.lines.forEach((l, i) => {
     if (l.isNonDoor) return;
     if (l.approved) return;  // operator manually approved this line — never flag
-    const sku = (l.sku || '').toUpperCase();
-    const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
-    if (l.confidence === 'low') state.flags.add(i);
-    // Parts only need a SKU. SD/FSFK need species + finish.
-    if (!sku) state.flags.add(i);
-    if (!isPart && (!l.species || !l.finishName)) state.flags.add(i);
-    // door style not in known list (warning only) — skip for parts
-    if (!isPart && !isValidDoorStyleForSku(l.sku, l.doorStyle)) state.flags.add(i);
-    // Combo validation: door style × species × finish category
-    if (!isPart) {
-      const finishCat = inferFinishCategoryFromLine(l);
-      if (validateDoorSpeciesFinish(l.doorStyle, l.species, finishCat, l.finishName)) state.flags.add(i);
-    }
+    if (getFlagReasons(l).length > 0) state.flags.add(i);
+    else if (l.confidence === 'low') state.flags.add(i);
   });
 
   renderLineTable();
@@ -2906,6 +3349,29 @@ function getFlagReasons(line) {
     const violation = validateDoorSpeciesFinish(line.doorStyle, line.species, finishCat, line.finishName);
     if (violation) reasons.push(violation);
   }
+
+  // CB (Color Block) validation — CBs have species + finish but no door style.
+  // They MUST follow the same finish×species rules as sample doors. Per field
+  // feedback: a CB with Mystic Beige on Hickory, Antique White on Cherry, etc.,
+  // should flag the same way an SD with that combo would. The validator
+  // already encodes these rules; CBs just need to be wired into the check.
+  if (sku === 'CB') {
+    // Missing fields are still flagged (CB needs species + finish to ride along
+    // on the right sub-order).
+    if (!line.species) reasons.push('CB missing Species — color blocks need a species to route to the right sub-order');
+    if (!line.finishName) reasons.push('CB missing Finish — color blocks need a finish to route to the right sub-order');
+    // Discontinued finish on a CB is just as bad as on an SD.
+    const finishLower = (line.finishName || '').trim().toLowerCase();
+    if (finishLower && DISCONTINUED_FINISHES[finishLower]) {
+      reasons.push(`Finish "${line.finishName}" is DISCONTINUED — Integrity no longer offers it. Contact the dealer for a current ${DISCONTINUED_FINISHES[finishLower].toLowerCase()} finish.`);
+    }
+    // The species×finish combination check. CBs don't have a door style so we
+    // pass empty doorStyle to validateDoorSpeciesFinish, which only checks the
+    // species×finish rule (the door×species check is skipped when doorStyle is empty).
+    const finishCat = inferFinishCategoryFromLine(line);
+    const violation = validateDoorSpeciesFinish('', line.species, finishCat, line.finishName);
+    if (violation) reasons.push(violation);
+  }
   return reasons;
 }
 
@@ -2953,6 +3419,17 @@ function getFlagFields(line) {
     const finishCat = inferFinishCategoryFromLine(line);
     if (validateDoorSpeciesFinish(line.doorStyle, line.species, finishCat, line.finishName)) {
       fields.add('doorStyle'); fields.add('species'); fields.add('finish');
+    }
+  }
+  // CB validation — same species×finish rules as SDs
+  if (sku === 'CB') {
+    if (!line.species) fields.add('species');
+    if (!line.finishName) fields.add('finish');
+    const finishLower = (line.finishName || '').trim().toLowerCase();
+    if (finishLower && DISCONTINUED_FINISHES[finishLower]) fields.add('finish');
+    const finishCat = inferFinishCategoryFromLine(line);
+    if (validateDoorSpeciesFinish('', line.species, finishCat, line.finishName)) {
+      fields.add('species'); fields.add('finish');
     }
   }
   return fields;
@@ -3274,18 +3751,12 @@ function onLineFieldChange(e) {
     }
   }
 
-  // re-evaluate flag for this row
+  // re-evaluate flag for this row. Use getFlagReasons as the single source of
+  // truth — it handles SD/SFK/NDR/SMB15/FSFK AND CB validation correctly, so
+  // we don't have to maintain duplicate logic here.
   const wasFlagged = state.flags.has(idx);
-  const skuUp = (line.sku || '').toUpperCase();
-  const isPart = skuUp && skuUp !== 'SD' && skuUp !== 'FSFK';
-  const finishCat = !isPart ? inferFinishCategoryFromLine(line) : '';
-  const comboViolation = !isPart && validateDoorSpeciesFinish(line.doorStyle, line.species, finishCat, line.finishName);
-  const nowFlag = !line.isNonDoor && !line.approved && (
-    !skuUp
-    || (!isPart && (!line.species || !line.finishName))
-    || (!isPart && !isValidDoorStyleForSku(line.sku, line.doorStyle))
-    || !!comboViolation
-  );
+  const reasons = !line.isNonDoor && !line.approved ? getFlagReasons(line) : [];
+  const nowFlag = reasons.length > 0;
   if (nowFlag) state.flags.add(idx); else state.flags.delete(idx);
 
   // Always refresh the per-cell highlights — even if the row stays flagged,
@@ -3293,7 +3764,7 @@ function onLineFieldChange(e) {
   // others remain. This is what makes the visual feedback feel responsive:
   // pick a valid value → orange goes away from that cell immediately.
   const flagFields = nowFlag ? getFlagFields(line) : new Set();
-  const fieldToCellIndex = { sku: 1, qty: 2, doorStyle: 5, species: 6, finish: 7 };
+  const fieldToCellIndex = { sku: 2, qty: 3, doorStyle: 6, species: 7, finish: 8 };
   for (const [field, ci] of Object.entries(fieldToCellIndex)) {
     const td = tr.children[ci];
     if (!td) continue;
@@ -3347,22 +3818,13 @@ function onLineAction(e) {
     if (state.lines[idx].approved) {
       state.flags.delete(idx);
     } else {
-      // Re-evaluate flag for this row now that approval is removed
+      // Re-evaluate flag for this row now that approval is removed. getFlagReasons
+      // handles SD/SFK/NDR/SMB15/FSFK validation AND CB species×finish validation,
+      // so a single call covers every SKU type.
       const l = state.lines[idx];
-      if (!l.isNonDoor) {
-        const sku = (l.sku || '').toUpperCase();
-        const isPart = sku && sku !== 'SD' && sku !== 'SFK' && sku !== 'NDR' && sku !== 'SMB15' && sku !== 'FSFK';
-        let shouldFlag = false;
-        if (l.confidence === 'low') shouldFlag = true;
-        if (!sku) shouldFlag = true;
-        if (!isPart && (!l.species || !l.finishName)) shouldFlag = true;
-        if (!isPart && !isValidDoorStyleForSku(l.sku, l.doorStyle)) shouldFlag = true;
-        if (!isPart) {
-          const finishCat = inferFinishCategoryFromLine(l);
-          if (validateDoorSpeciesFinish(l.doorStyle, l.species, finishCat, l.finishName)) shouldFlag = true;
-        }
-        if (shouldFlag) state.flags.add(idx);
-      }
+      // Temporarily clear the approved flag so getFlagReasons doesn't short-circuit.
+      const reasons = getFlagReasons(l);
+      if (reasons.length > 0 || l.confidence === 'low') state.flags.add(idx);
     }
     renderLineTable();
     updateFlagSummary();
@@ -3515,9 +3977,12 @@ document.getElementById('reExamSubmit').addEventListener('click', async () => {
 // The actual re-examination logic. Sends the original files + a focused prompt
 // that includes the selected lines' current data and the operator's note.
 async function runReExamination(selectedIndices, operatorNote) {
-  // Need the original files still in state.files (we keep them for this purpose)
-  if (!state.files || state.files.length === 0) {
-    alert('Cannot re-examine — original source files are no longer available. Re-upload the order to use this feature.');
+  // Need the original source (files OR pasted text) still available so we can
+  // give the AI the same input it had the first time.
+  const hasFiles = state.files && state.files.length > 0;
+  const hasPasted = state.pastedTextSnapshot && state.pastedTextSnapshot.trim().length > 0;
+  if (!hasFiles && !hasPasted) {
+    alert('Cannot re-examine — original source is no longer available. Re-upload or re-paste the order to use this feature.');
     return;
   }
   const apiKey = localStorage.getItem('ic_claude_key') || '';
@@ -3610,6 +4075,14 @@ No other text, no preamble, no markdown fences — just the JSON.`;
           source: { type: "base64", media_type: f.mediaType, data: base64 }
         });
       }
+    }
+    // If the original extraction included pasted text, include it here too so
+    // the AI has the same source it had originally.
+    if (hasPasted) {
+      content.push({
+        type: "text",
+        text: `Original pasted text from the initial extraction:\n\n<pasted_text>\n${state.pastedTextSnapshot.trim()}\n</pasted_text>`
+      });
     }
     content.push({ type: "text", text: reExamPrompt });
 
@@ -3985,11 +4458,14 @@ function splitOrders(lines) {
   // refinements can be added when more examples come in.
   const isSmb15 = (l) => (l.sku || '').toUpperCase() === 'SMB15';
 
-  // Classify each Part SKU into one of three buckets:
+  // Classify each Part SKU into one of four buckets:
   //   'paint' — color block sets that are paint-only (CBBOX, CBSET, CBSET-M, CBSET-PNT)
   //   'stain' — color block sets that are stain-only (CBSET-C, CBSET-H, CBSET-O, CBSET-WO, CBSET-STN)
-  //   'general' — everything else (LIT, TKIT, DDU54, PRICE, ES LIT, etc.)
+  //   'ddu'   — Door Display Units (DDU, DDU54, DDU487822, etc.) — large physical units that ship separately
+  //   'general' — everything else (LIT, TKIT, PRICE, ES LIT, etc.)
   // CBSETs split between paint and stain buckets so they ship with the right finish category.
+  // DDUs get their own order because they're large physical display units that bundle poorly
+  // with literature and tool kits.
   // Other Parts collapse onto a single generic Parts order.
   //
   // Note: Bare "CB" (single Color Block) is handled separately AFTER initial splitting
@@ -4000,6 +4476,8 @@ function splitOrders(lines) {
     const sku = ((typeof line === 'string' ? line : line.sku) || '').toUpperCase().trim();
     if (PAINT_PART_SKUS.has(sku)) return 'paint';
     if (STAIN_PART_SKUS.has(sku)) return 'stain';
+    // Door Display Units — any SKU starting with "DDU" gets its own order
+    if (sku.startsWith('DDU')) return 'ddu';
     return 'general';
   };
 
@@ -4182,6 +4660,13 @@ function splitOrders(lines) {
         if (c !== 0) return c;
       }
     }
+    // Within Parts, sort by bucket: paint, stain, ddu, general (in that order).
+    if (a.skuType === 'PART' && b.skuType === 'PART') {
+      const bucketRank = { paint: 0, stain: 1, ddu: 2, general: 3 };
+      const ar = bucketRank[a.partBucket] ?? 99;
+      const br = bucketRank[b.partBucket] ?? 99;
+      if (ar !== br) return ar - br;
+    }
     const cs = (a.species || '').localeCompare(b.species || '');
     if (cs !== 0) return cs;
     return (a.finishCategory || '').localeCompare(b.finishCategory || '');
@@ -4219,6 +4704,7 @@ function renderSuborders(groups) {
       let bucketLabel;
       if (g.partBucket === 'paint') { bucketLabel = 'Parts (Paint)'; tagText = 'PAINT PARTS'; }
       else if (g.partBucket === 'stain') { bucketLabel = 'Parts (Stain)'; tagText = 'STAIN PARTS'; }
+      else if (g.partBucket === 'ddu') { bucketLabel = 'Door Display Units'; tagText = 'DDU'; }
       else { bucketLabel = 'Parts'; tagText = 'PARTS'; }
       headerLabel = `${bucketLabel} · ${distinctSkus.join(', ')}`;
       tagColor = '#5a4ec2';
@@ -4468,6 +4954,7 @@ function generatePdfForGroup(group, orderNum, totalOrders) {
   if (group.skuType === 'PART') {
     if (group.partBucket === 'paint') descParts = ['Parts Paint'];
     else if (group.partBucket === 'stain') descParts = ['Parts Stain'];
+    else if (group.partBucket === 'ddu') descParts = ['Door Display Units'];
     else descParts = ['Parts'];
   } else if (group.skuType === 'SD-CB') {
     // Orphan CB-only orders — prefix with "CB" to distinguish from SD orders
@@ -4627,6 +5114,7 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
   if (group.skuType === 'PART') {
     if (group.partBucket === 'paint') headerText = `PARTS ORDER · PAINT (Color Block Sets)`;
     else if (group.partBucket === 'stain') headerText = `PARTS ORDER · STAIN (Color Block Sets)`;
+    else if (group.partBucket === 'ddu') headerText = `DOOR DISPLAY UNIT ORDER`;
     else headerText = `PARTS ORDER · MIXED SKUs`;
   } else {
     const glazeTech = meaningful(group.glazeTechnique);
@@ -5028,9 +5516,15 @@ document.getElementById('startOverBtn').addEventListener('click', () => {
   state.selectedForReview = new Set();
   state.splitGroups = null;
   state.originalLines = null;
+  state.pastedTextSnapshot = '';
   // Multi-order: clear logical orders array too
   state.logicalOrders = [];
   state.currentOrderIndex = 0;
+  // Clear the paste-text input too
+  if (pasteInput) {
+    pasteInput.value = '';
+    refreshPasteHint();
+  }
   // Hide tabs container in case it was visible
   const tabsContainer = document.getElementById('orderTabsContainer');
   if (tabsContainer) tabsContainer.classList.add('hidden');
