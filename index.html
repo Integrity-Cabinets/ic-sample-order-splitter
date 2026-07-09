@@ -2372,6 +2372,12 @@ GLAZE_TECHNIQUES: ${GLAZE_TECHNIQUES.join(", ")}
 
 MADISON / MONTEREY WIPING STAIN RULE: The Madison and Monterey door styles ALWAYS receive a wiping stain. If a Madison or Monterey line has no glaze specified, set glazeTechnique to "Hand Wipe" and glazeColor to "Black" (the standard default). If the dealer explicitly wrote a glaze technique or color, keep what they wrote.
 
+PAINTED-PRODUCT SPECIES RULES (opaque paints, NOT translucents):
+- Atlantis, Nassau, and Aruba with a paint finish are ALWAYS MDF.
+- Elite FSFK door styles with a paint finish are ALWAYS Maple (Elite is never available in MDF).
+- All other door styles with a paint finish can be Maple OR MDF. Forms often write the species column as "Maple /MDF" meaning "either works" — when you see that, or when no species is given at all on a paint line, default the species to "Maple".
+- These rules do NOT apply to translucent finishes (Autumn Bronze, Antique White, Bayou Mist, Mystic Beige, Wheat) — translucents show the wood, so keep exactly the species the dealer wrote, and if it's missing, leave it blank so the operator resolves it.
+
 DISCONTINUED FINISHES: ${Object.keys(DISCONTINUED_FINISHES).join(", ")}. These finishes are no longer offered but dealers sometimes still order them. If you see one, STILL capture it exactly as written in the finishName field and set confidence to "low" with a note like "discontinued finish". DO NOT mark the line as isNonDoor, DO NOT silently substitute a different finish, and DO NOT drop the line. The operator needs to see the discontinued finish so they can contact the dealer. The tool will flag it automatically.
 
 PARTS / OTHER SKUs: Anything that is not "SD", "SFK", or "FSFK" is a "Part" — examples: DDU54 (Door Display Unit), LIT (Literature), ES LIT, TKIT (Tool Kit), KIT, CBSET (Color Block Set), MOLDING SET, PRICE, ACCESSORY, HARDWARE. Extract these normally with their SKU, qty, and itemText. They DO NOT need a doorStyle, species, or finish — leave those blank. They get split into their own orders by SKU. Set isNonDoor=false for these (it's only for items the user wants to manually exclude from the output entirely).
@@ -2404,9 +2410,9 @@ SKU TYPES — IMPORTANT:
 - "NDR" = No Drill Door. A sample door that ships without hinge cup drilling. Treated EXACTLY like SD — same door style catalog, same species/finish/glaze/process fields, same isolation rules. Some dealers write "DR" as shorthand for NDR — if you see "DR" used as a SKU/cabinet code (NOT "DRB" or "DDU"), translate it to "NDR". Pages often have a footer note like "Door size 12 1/2 x 12 1/2 to fit existing display" — this is a clue that DR lines on that page are actually NDR.
 - "SMB15" = Bella 5-piece sample. Treated like a sample-product type (needs door style + species + finish). Comments usually look like "Bella 5PDF Pro White" — the door style is Bella, finish is Pro White, "5PDF" indicates 5-piece drawer front. Each unique SMB15 spec gets its own order.
 - "FSFK" = Full-Size Sample Front Kit. Only uses Elite series door styles: ${ELITE_DOOR_STYLES.join(", ")}.
-  FSFK door styles are prefixed with "B-" (Beaded frame) or "S-" (Standard frame). Examples: "B-Vicksburg", "S-Highland Flush", "B-Sanford Beaded".
-  When you see a B- or S- prefix on an FSFK line, set "fsfkFrameType" to "B" or "S" and put the door style WITHOUT the prefix in "doorStyle".
-  If an FSFK line has no visible B/S prefix, leave fsfkFrameType empty.
+  FSFK door styles are prefixed with "B-" (Beaded frame) or "S-" (Standard frame). Examples: "B-Vicksburg", "S-Highland Flush", "B-Sanford Beaded". Forms may also write the frame as a SUFFIX word instead: "Vicksburg Beaded" means Beaded (B), "Somerville Flush" means Standard (S).
+  When you see a B-/S- prefix OR a Beaded/Flush suffix on an FSFK line, set "fsfkFrameType" to "B" or "S" and put the door style WITHOUT the prefix/suffix in "doorStyle" (e.g. "Somerville Flush" → doorStyle "Somerville", fsfkFrameType "S").
+  If an FSFK line indicates NEITHER Beaded nor Standard, default fsfkFrameType to "S" (Standard) — that is the standing business rule.
   IMPORTANT — ELITE FSFK SPECIES RULE: Elite door styles are NOT available in MDF. If you see an FSFK line ordered in MDF (the rep made a mistake), set species to "Maple" instead — that's the correct Elite substrate. This applies to ALL Elite door styles regardless of finish.
 - "DRB" = Drawer Box sample. Treat as a Part (no door style, species, or finish needed). $465 list.
 - "CBSET" / "DDU54" / "LIT" / "ES LIT" / "TKIT" / "DRB" / "PRICE" / "SASK" / etc. = Parts (no door style/species/finish needed).
@@ -2860,6 +2866,17 @@ function normalizeLines(rawLines) {
     if (fromStyle) return { frame: fromStyle.frame, cleanedStyle: fromStyle.rest };
     const fromText = tryExtract(itemText);
     if (fromText) return { frame: fromText.frame, cleanedStyle: doorStyle };
+    // Suffix-word form: order forms often write "Vicksburg Beaded" or
+    // "Somerville Flush" instead of B-/S- prefixes. "Beaded" = B frame,
+    // "Flush" = Standard (S) frame. Strip the suffix from the door style so
+    // "Somerville Flush" validates as "Somerville".
+    if (doorStyle) {
+      const suffix = doorStyle.match(/^(.*?)[\s-]+(Beaded|Flush)\s*$/i);
+      if (suffix) {
+        const frame = /beaded/i.test(suffix[2]) ? 'B' : 'S';
+        return { frame, cleanedStyle: suffix[1].trim() };
+      }
+    }
     return { frame: '', cleanedStyle: doorStyle };
   };
 
@@ -3021,6 +3038,42 @@ function normalizeLines(rawLines) {
       }
     }
 
+    // Field-feedback rule: many order forms write the species column as
+    // "Maple /MDF" (meaning "either substrate works — you pick"). Resolution
+    // per field guidance:
+    //   - Atlantis/Nassau/Aruba + paint → MDF (handled by the coercion below)
+    //   - Elite FSFK → Maple (MDF not available on Elite; coercion below)
+    //   - Everything else (HO/FO door styles) → default to Maple
+    // So here we resolve the ambiguous marker to Maple, then let the two
+    // downstream coercions flip it where their rules apply. Additionally, an
+    // opaque-PAINT line with NO species at all defaults to Maple (per field
+    // guidance: "if clear direction is not provided then default to Maple").
+    // Translucents are excluded — their species restrictions are real (Wheat
+    // is White-Oak-only, etc.), so a missing species there should flag, not
+    // silently default into an invalid combo.
+    {
+      const skuUp = sku.toUpperCase();
+      const isDoorSku = skuUp === 'SD' || skuUp === 'SFK' || skuUp === 'NDR' ||
+                        skuUp === 'SMB15' || skuUp === 'FSFK';
+      if (isDoorSku) {
+        // Resolve "Maple /MDF", "Maple/MDF", "MDF/Maple" etc. → Maple
+        if (/^\s*(maple\s*\/\s*mdf|mdf\s*\/\s*maple)\s*$/i.test(normalizedSpecies || '')) {
+          normalizedSpecies = 'Maple';
+        }
+        // Default missing species on opaque paint lines → Maple
+        if (!normalizedSpecies) {
+          const finishCat = cbFinishType || (l.finishType || '').trim();
+          const isTranslucent = /translucent/i.test(finishCat) ||
+                                TRANSLUCENT_FINISHES.includes(cbFinishName);
+          const isOpaquePaint = !isTranslucent && (
+                                  /paint/i.test(finishCat) ||
+                                  PAINT_FINISHES.includes(cbFinishName)
+                                );
+          if (isOpaquePaint) normalizedSpecies = 'Maple';
+        }
+      }
+    }
+
     // Field-feedback rule: Atlantis, Nassau, and Aruba on PAINT samples must
     // be MDF — reps frequently send these in as Maple by mistake. We coerce
     // silently — no note, no flag. The downstream door×species×finish validator
@@ -3122,7 +3175,9 @@ function normalizeLines(rawLines) {
       itemText,
       doorStyle,
       doorStyleVariant: variantInfo.variant,
-      fsfkFrameType: fsfkInfo.frame,
+      // FSFK frame: 'B' (Beaded) or 'S' (Standard). Field rule: if the dealer
+      // didn't specify Beaded or Standard on an FSFK line, default to Standard.
+      fsfkFrameType: fsfkInfo.frame || (sku.toUpperCase() === 'FSFK' ? 'S' : ''),
       species: normalizedSpecies,
       finishType: cbFinishType,
       finishName: cbFinishName,
