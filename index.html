@@ -2479,9 +2479,21 @@ Examples:
 
 For each line item, set "confidence": "high", "medium", or "low".
 - high = every field is clearly legible and matches a known value
-- medium = legible but you made an inference (e.g., abbreviation expansion)
+- medium = legible but you made a GENUINE inference not covered by any rule in these instructions
 - low = illegible, ambiguous, or doesn't match any reference value
 Set confidence to "low" for any field you had to guess.
+
+STANDING RULES ARE NOT INFERENCES — DO NOT LOWER CONFIDENCE FOR THEM:
+Applying a rule that is explicitly documented in these instructions means the value is CERTAIN, not uncertain. Keep confidence "high" and do NOT add a cautionary note when you:
+- Resolve "Maple /MDF" (or a missing paint species) to Maple, or to MDF for Atlantis/Nassau/Aruba
+- Coerce Elite FSFK species to Maple
+- Normalize Rift White Oak → White Oak or Rift Red Oak → Oak on SD/SFK/NDR lines (or preserve rift on FSFK)
+- Convert a SASK-tagged door line to SD
+- Translate "DR" to NDR
+- Parse a B-/S- prefix or Beaded/Flush suffix into fsfkFrameType, or default the frame to "S"
+- Apply the Madison/Monterey Black Hand Wipe glaze default, or respect an explicitly written glaze
+- Expand documented dealer shorthand (MPL, HKY, CHY, WO, KH, RO)
+These are settled business rules — the operator does not need to review them. Reserve "medium"/"low" and explanatory notes for genuine reading uncertainty: unclear handwriting, values that match nothing in the reference lists, or judgment calls these instructions don't cover. The notes field should describe UNCERTAINTY, not narrate rule applications.
 
 FREE-TEXT / PASTED INPUT (rep emails, plain-text sample lists):
 When the input includes a <pasted_text> block (usually a rep email or plain list), treat every non-empty line as potentially a line item. These inputs are terse and shorthand-heavy. Common patterns:
