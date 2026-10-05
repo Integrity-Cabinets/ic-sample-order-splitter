@@ -4090,6 +4090,13 @@ function renderLineTable() {
     inp.addEventListener('change', onLineFieldChange);
     inp.addEventListener('input', onLineFieldChange);
   });
+  // Text inputs only fire 'change' on blur. Let Enter commit the SKU field
+  // too, so typing "SFK" + Enter takes effect without having to click away.
+  body.querySelectorAll('input[data-f="sku"]').forEach(inp => {
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+    });
+  });
   body.querySelectorAll('button[data-act]').forEach(btn => {
     btn.addEventListener('click', onLineAction);
   });
@@ -4230,12 +4237,36 @@ function onLineFieldChange(e) {
         : (line.sku ? `<div style="text-align:right; padding:6px 4px; color:var(--warn); font-size:11px;">SKU not found</div>` : '<div style="padding:6px 4px; color:var(--muted);">—</div>');
     }
   } else if (field === 'sku') {
-    line.sku = (e.target.value || '').toUpperCase().trim();
+    // SKU is a free-text input, and this handler is bound to BOTH 'input'
+    // (every keystroke) and 'change' (commit on Tab/Enter/blur). Processing on
+    // 'input' caused two bugs: (1) renderLineTable() below rebuilt the table
+    // on every keystroke, destroying the field mid-typing so only one letter
+    // could be entered at a time; and (2) partial values like "S" (on the
+    // way to "SFK") were classified as a generic Part and wiped the line's
+    // door style / species / finish before the operator finished typing.
+    // So: ignore keystrokes entirely and act only on the committed value.
+    if (e.type === 'input') return;
+
+    const committed = (e.target.value || '').toUpperCase().trim();
+    if (committed === (line.sku || '').toUpperCase()) return;  // no-op
+    line.sku = committed;
     const isFsfkNow = line.sku === 'FSFK';
     const isSdNow = line.sku === 'SD';
     const isSfkNow = line.sku === 'SFK';
     const isCbNow = line.sku === 'CB';
-    const isPartNow = !isFsfkNow && !isSdNow && !isSfkNow && !isCbNow;
+    const isNdrNow = line.sku === 'NDR';
+    const isSmbNow = line.sku === 'SMB15';
+    const isDoorSkuNow = isFsfkNow || isSdNow || isSfkNow || isNdrNow || isSmbNow;
+    // Only treat it as a Part — and clear the door/finish fields — when the
+    // SKU is one we actually recognize as a part. An unrecognized value (a
+    // typo like "SFKK") keeps the line's fields intact; the price cell shows
+    // "SKU not found" so the operator sees it and can fix the SKU.
+    const isRecognizedPart = !isDoorSkuNow && !isCbNow &&
+      (NON_DOOR_SKUS.includes(line.sku) || lookupPrice(line.sku) !== null);
+    const isPartNow = isRecognizedPart;
+    // Remember whether the field still had focus (Enter-key commit) so we
+    // can hand focus back after the re-render instead of dropping it.
+    const hadFocus = document.activeElement === e.target;
     if (isPartNow) {
       // Generic Parts (LIT, TKIT, etc.) — clear all door/finish fields
       line.doorStyle = '';
@@ -4252,8 +4283,11 @@ function onLineFieldChange(e) {
       line.doorStyle = '';
       line.fsfkFrameType = '';
       line.drawerFrontType = '';
-    } else {
-      // SD, SFK, or FSFK: validate door style still applies for the chosen SKU type
+    } else if (isDoorSkuNow) {
+      // SD, SFK, FSFK, NDR, SMB15: validate door style still applies for the
+      // chosen SKU type. (Existing rule, unchanged: FSFK is Elite-only, so an
+      // Elite style switched to SFK clears — and a non-Elite style switched to
+      // FSFK clears — leaving the operator to pick a valid one.)
       const validStyles = isFsfkNow ? ELITE_DOOR_STYLES : DOOR_STYLES;
       if (line.doorStyle && !validStyles.includes(line.doorStyle)) {
         line.doorStyle = '';
@@ -4261,16 +4295,24 @@ function onLineFieldChange(e) {
       // Frame type only applies to FSFK
       if (!isFsfkNow) line.fsfkFrameType = '';
       // Drawer front type applies to SFK and FSFK; default to Slab if empty;
-      // clear it for SD lines
+      // clear it for SD/NDR/SMB15 lines
       if (isSfkNow || isFsfkNow) {
         if (!line.drawerFrontType) line.drawerFrontType = 'Slab';
       } else {
         line.drawerFrontType = '';
       }
     }
+    // (Unrecognized SKU: fall through with fields intact.)
+
     // Full re-render needed since column visibility changes
     renderLineTable();
     updateFlagSummary();
+    // Hand focus back to the same row's SKU field if the operator committed
+    // with Enter (still focused) — so a Tab-through workflow isn't broken.
+    if (hadFocus) {
+      const again = document.querySelector(`#lineTableBody tr[data-idx="${idx}"] input[data-f="sku"]`);
+      if (again) { again.focus(); again.select(); }
+    }
     return;
   } else {
     line[field] = e.target.value;
