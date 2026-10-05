@@ -830,6 +830,17 @@
       <div class="field"><label>Email</label><input type="text" id="bEmail" /></div>
     </div>
 
+    <h3 style="font-family:'Helvetica Neue',sans-serif; font-size:11px; text-transform:uppercase; letter-spacing:0.15em; color:var(--muted); margin:16px 0 10px;">Ship To <span style="text-transform:none; letter-spacing:0; font-size:10px;">(leave blank if same as Invoice)</span></h3>
+    <div class="review-header-grid">
+      <div class="field"><label>Customer Name</label><input type="text" id="sName" /></div>
+      <div class="field"><label>Phone</label><input type="text" id="sPhone" /></div>
+      <div class="field" style="grid-column: span 2;"><label>Street / PO Box</label><input type="text" id="sStreet" /></div>
+      <div class="field"><label>City</label><input type="text" id="sCity" /></div>
+      <div class="field"><label>State</label><input type="text" id="sState" /></div>
+      <div class="field"><label>ZIP</label><input type="text" id="sZip" /></div>
+      <div class="field"><label>Email</label><input type="text" id="sEmail" /></div>
+    </div>
+
     <div class="table-toolbar" style="margin-top:28px;">
       <div>
         <h3 style="font-family:'Helvetica Neue',sans-serif; font-size:11px; text-transform:uppercase; letter-spacing:0.15em; color:var(--muted); margin:0;">Line Items</h3>
@@ -974,14 +985,14 @@ const SPECIES = [
 
 const STAIN_FINISHES = [
   "Cappuccino","Cavern","Coffee","Dark","Driftwood","Ebony","Espresso",
-  "Light","Medium","Natural","Sahara","Smoke"
+  "Light","Medium","Natural","Pecan","Sahara","Smoke"
 ];
 
 const PAINT_FINISHES = [
   "Admiral Blue","Black Rub Thru","Blue Smoke","Buttercream","Celery",
-  "Denim Blue","Fog","Galaxy","Graphite","Grit","Icy Mint","Ivory",
+  "Denim Blue","Dune","Fog","Galaxy","Graphite","Grit","Harbor","Icy Mint","Ivory",
   "Jade","Olive","Onyx","Pacific Sand","Pebble Gray","Saddle","Sage",
-  "Snow","Spanish Moss","White","Willow"
+  "Snow","Spanish Moss","Whisper","White","Willow"
 ];
 
 const TRANSLUCENT_FINISHES = [
@@ -1091,6 +1102,7 @@ const STAIN_RULES = {
   "Light": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Medium": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Natural": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
+  "Pecan": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Sahara": ['Oak', 'Maple', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Smoke": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak']
 };
@@ -1103,10 +1115,12 @@ const PAINT_RULES = {
   "Buttercream": ['Maple', 'MDF'],
   "Celery": ['Maple', 'MDF'],
   "Denim Blue": ['Maple', 'MDF'],
+  "Dune": ['Maple', 'MDF'],
   "Fog": ['Maple', 'MDF'],
   "Galaxy": ['Maple', 'MDF'],
   "Graphite": ['Maple', 'MDF'],
   "Grit": ['Maple', 'MDF'],
+  "Harbor": ['Maple', 'MDF'],
   "Icy Mint": ['Maple', 'MDF'],
   "Ivory": ['Maple', 'MDF'],
   "Jade": ['Maple', 'MDF'],
@@ -1118,6 +1132,7 @@ const PAINT_RULES = {
   "Sage": ['Maple', 'MDF'],
   "Snow": ['Maple', 'MDF'],
   "Spanish Moss": ['Maple', 'MDF'],
+  "Whisper": ['Maple', 'MDF'],
   "White": ['Maple', 'MDF'],
   "Willow": ['Maple', 'MDF']
 };
@@ -2402,6 +2417,7 @@ PAINTED-PRODUCT SPECIES RULES (opaque paints, NOT translucents):
 - Elite FSFK door styles with a paint finish are ALWAYS Maple (Elite is never available in MDF).
 - All other door styles with a paint finish can be Maple OR MDF. Forms often write the species column as "Maple /MDF" meaning "either works" — when you see that, or when no species is given at all on a paint line, default the species to "Maple".
 - These rules do NOT apply to translucent finishes (Autumn Bronze, Antique White, Bayou Mist, Mystic Beige, Wheat) — translucents show the wood, so keep exactly the species the dealer wrote, and if it's missing, leave it blank so the operator resolves it.
+- CRITICAL: MDF is ONLY ever valid with an OPAQUE PAINT finish. NEVER assign species "MDF" to a line whose finish is a STAIN (e.g. Espresso, Medium, Smoke, Sahara, Cavern, Natural, Dark, Light, Driftwood) or a TRANSLUCENT (Autumn Bronze, Antique White, Bayou Mist, Mystic Beige, Wheat). You cannot stain or translucent-finish MDF — it must be real wood. If the dealer wrote a wood species (White Oak, Maple, Cherry, etc.) with a stain or translucent finish, keep that exact species. This applies to Atlantis, Nassau, and Aruba too: those are MDF ONLY when the finish is an opaque paint — on a stain or translucent, use the wood species the dealer wrote.
 
 DISCONTINUED FINISHES: ${Object.keys(DISCONTINUED_FINISHES).join(", ")}. These finishes are no longer offered but dealers sometimes still order them. If you see one, STILL capture it exactly as written in the finishName field and set confidence to "low" with a note like "discontinued finish". DO NOT mark the line as isNonDoor, DO NOT silently substitute a different finish, and DO NOT drop the line. The operator needs to see the discontinued finish so they can contact the dealer. The tool will flag it automatically.
 
@@ -2532,6 +2548,7 @@ When the input includes a <pasted_text> block (usually a rep email or plain list
 - "4-packs of Pro/Classic Brochures" or "4-packs of Elite Brochures" — qty 4, SKU "LIT" (literature). Set itemText to describe which pack (e.g. "Pro/Classic Brochures" or "Elite Brochures").
 - "4 complete sets of color samples (stains and paints)" or "Complete set of paint and stain samples" — this is a CBSET line. Set SKU to "CBSET" with qty as written (default 1 if not specified).
 - "Ship to address:" or "Ship to:" followed by an address on the next lines → that's the ship-to for the current order. Populate shipStreet / shipCity / shipState / shipZip. The "Name" line before or nearby is likely the customer/company name — put it in shipName.
+- ALPHA CODE / ACCT: the dealer's account identifier, usually near the top of the form labeled "Alpha Code", "Alpha Code / Acct", "Account Number", or "Acct #". It's often a short code (letters and/or digits, e.g. "KKL-01", "DARRYL", an account number). Capture it into the "alphaCode" field. If the form has the labeled box but it's blank, leave alphaCode empty — do not guess or copy the PO into it.
 - If you see a customer NAME line like "Suburban Kitchens" or "Chic Lumber" (a company name written on its own line, usually before the address), that's the shipName.
 - "Attn: Mike Dermitzakis" — that's an attention line, put it in shipName too if no other name was given, otherwise capture as a note.
 - Blank lines are separators, not line items. Ignore them.
@@ -3172,6 +3189,60 @@ function normalizeLines(rawLines) {
       }
     }
 
+    // Field-feedback GUARD (Aug 2026): the AI extraction has repeatedly
+    // defaulted species to "MDF" on lines whose finish is a STAIN or a
+    // TRANSLUCENT — combinations where MDF is never valid (you can't stain or
+    // translucent-finish an MDF substrate; those finishes show/absorb into real
+    // wood). This over-applies the Atlantis/Nassau/Aruba "paint → MDF" rule and
+    // silently corrupts the dealer's real species, forcing the operator to fix
+    // it by hand. Two separate review reports (2026-08-03, 2026-08-11) showed
+    // Aruba/Atlantis/Salem/Lexington stain & translucent lines wrongly set to
+    // MDF. This guard runs AFTER every MDF-setting coercion above and restores
+    // the dealer's written species whenever MDF landed on a stain/translucent.
+    //   - If the dealer wrote a real species, restore exactly that.
+    //   - If the dealer left species blank (so we can't restore), clear MDF to
+    //     '' so the line flags as missing-species instead of shipping a wrong,
+    //     silently-invalid MDF value. Translucents intentionally flag rather
+    //     than default (their species restrictions are real).
+    // Deterministic backstop for the AI prompt rule; no note on restore because
+    // the dealer's own species is authoritative and needs no operator review.
+    {
+      const skuUp = sku.toUpperCase();
+      const isDoorSku = skuUp === 'SD' || skuUp === 'SFK' || skuUp === 'NDR' ||
+                        skuUp === 'FSFK';
+      if (isDoorSku && (normalizedSpecies || '').toLowerCase() === 'mdf') {
+        const finishCat = cbFinishType || (l.finishType || '').trim();
+        const isTranslucent = /translucent/i.test(finishCat) ||
+                              TRANSLUCENT_FINISHES.includes(cbFinishName);
+        const isStain = /stain/i.test(finishCat) ||
+                        STAIN_FINISHES.includes(cbFinishName);
+        if (isStain || isTranslucent) {
+          const dealerSpecies = (rawSpecies || '').trim();
+          const dealerWroteMdf = /^mdf$/i.test(dealerSpecies);
+          if (dealerSpecies && !dealerWroteMdf) {
+            // Restore what the dealer actually wrote, normalized the same way
+            // the top-of-loop normalization would have handled it — BUT only if
+            // the dealer's own species is actually valid with this finish. If
+            // the dealer's species+finish is itself impossible (e.g. Maple +
+            // Dark — Dark isn't offered on Maple), restoring it would just swap
+            // one invalid combo for another. In that case clear to blank so the
+            // line flags cleanly and the finish/species recommender guides the
+            // operator to a real fix (per field decision, 2026-08-19).
+            const restored = normalizeSpeciesForLine(sku, doorStyle, dealerSpecies);
+            const finishNm = cbFinishName;
+            const finishRule = STAIN_RULES[finishNm] || PAINT_RULES[finishNm] ||
+                               (typeof TRANSLUCENT_PAINT_RULES !== 'undefined' ? TRANSLUCENT_PAINT_RULES[finishNm] : null);
+            const restoredIsValid = !finishRule ||
+              finishRule.some(s => s.toLowerCase() === (restored || '').toLowerCase());
+            normalizedSpecies = restoredIsValid ? restored : '';
+          } else if (!dealerWroteMdf) {
+            // Nothing to restore — clear so it flags rather than ships bad MDF.
+            normalizedSpecies = '';
+          }
+        }
+      }
+    }
+
     // Field-feedback rule: Madison and Monterey MUST receive a wiping stain.
     // If the dealer didn't specify a glaze (or wrote "None"), default to the
     // standard Black hand-wipe. If the dealer explicitly specified a glaze
@@ -3433,6 +3504,13 @@ function saveHeaderToActiveOrder() {
     billState: get('bState'),
     billZip: get('bZip'),
     billEmail: get('bEmail'),
+    shipName: get('sName'),
+    shipPhone: get('sPhone'),
+    shipStreet: get('sStreet'),
+    shipCity: get('sCity'),
+    shipState: get('sState'),
+    shipZip: get('sZip'),
+    shipEmail: get('sEmail'),
   };
 }
 
@@ -3453,6 +3531,14 @@ function prefillReviewScreen(extracted) {
   document.getElementById('bState').value = h.billState || '';
   document.getElementById('bZip').value = h.billZip || '';
   document.getElementById('bEmail').value = h.billEmail || '';
+  const setShip = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  setShip('sName', h.shipName);
+  setShip('sPhone', h.shipPhone);
+  setShip('sStreet', h.shipStreet);
+  setShip('sCity', h.shipCity);
+  setShip('sState', h.shipState);
+  setShip('sZip', h.shipZip);
+  setShip('sEmail', h.shipEmail);
 
   // flag any line with validation issues. getFlagReasons covers SD/SFK/NDR/
   // SMB15/FSFK AND CB validation, so we call it once per line.
@@ -3466,6 +3552,121 @@ function prefillReviewScreen(extracted) {
 
   renderLineTable();
   updateFlagSummary();
+}
+
+// ============ Finish recommendation engine ============
+// When a species×finish combination is invalid (e.g. Mystic Beige on White Oak
+// — Mystic Beige is Cherry-only), the operator's real question is "then what
+// CAN this dealer order?" This derives that answer DETERMINISTICALLY from the
+// same validated rule maps the tool already uses — never from any brochure or
+// outside source. Strategy per Derek: hold the door style AND the wood species
+// fixed, and shift only the FINISH to ones that are actually valid on that
+// species. Prefer finishes in the SAME category the dealer chose (a stain gets
+// stain alternatives, a translucent gets translucent alternatives, a paint gets
+// paint), because that's closest to their design intent; if none exist in that
+// category, fall back to any valid finish so the operator still has options.
+// Discontinued finishes are never recommended.
+function recommendFinishesForSpecies(species, requestedFinishName) {
+  if (!species) return { sameCategory: [], category: null, others: [] };
+  const speciesLower = species.toLowerCase();
+
+  // Which category did the dealer's requested finish belong to?
+  let requestedCategory = null;
+  if (STAIN_RULES[requestedFinishName]) requestedCategory = 'stain';
+  else if (PAINT_RULES[requestedFinishName]) requestedCategory = 'paint';
+  else if (TRANSLUCENT_PAINT_RULES[requestedFinishName]) requestedCategory = 'translucent';
+
+  const isDiscontinued = (name) =>
+    !!DISCONTINUED_FINISHES[(name || '').trim().toLowerCase()];
+
+  const validIn = (rulesMap) => Object.keys(rulesMap).filter(name => {
+    if (isDiscontinued(name)) return false;
+    const allowed = rulesMap[name];
+    return allowed.some(s => s.toLowerCase() === speciesLower);
+  });
+
+  const stainOpts = validIn(STAIN_RULES);
+  const paintOpts = validIn(PAINT_RULES);
+  const translOpts = validIn(TRANSLUCENT_PAINT_RULES);
+
+  const categoryMap = { stain: stainOpts, paint: paintOpts, translucent: translOpts };
+  const categoryLabel = { stain: 'stain', paint: 'paint', translucent: 'translucent' };
+
+  let sameCategory = [];
+  let category = null;
+  if (requestedCategory && categoryMap[requestedCategory].length > 0) {
+    sameCategory = categoryMap[requestedCategory];
+    category = categoryLabel[requestedCategory];
+  }
+
+  // "Others" = everything valid on this species that isn't already in the
+  // same-category list, so the operator sees the full menu if they want it.
+  const all = [...stainOpts, ...paintOpts, ...translOpts];
+  const others = all.filter(n => !sameCategory.includes(n));
+
+  return { sameCategory, category, others };
+}
+
+// The OTHER axis (added 2026-08-19): hold the dealer's FINISH fixed and find
+// which wood species would make it valid — intersected with the species the
+// DOOR STYLE actually allows, so we never suggest a species the door can't be
+// built in. This is what the operator did by hand on the Aruba/Dark line: kept
+// Dark, switched Maple → White Oak (the only species valid for BOTH Aruba and
+// Dark). Returns the intersection list (often just one, which is the clean fix).
+function recommendSpeciesForFinish(doorStyle, finishName) {
+  const finishRule = STAIN_RULES[finishName] || PAINT_RULES[finishName] ||
+                     TRANSLUCENT_PAINT_RULES[finishName] || null;
+  if (!finishRule) return [];
+  let candidates = finishRule.slice();
+  if (doorStyle) {
+    const doorSpecies = lookupDoorStyleRule(doorStyle);
+    if (doorSpecies && doorSpecies.length) {
+      candidates = candidates.filter(s =>
+        doorSpecies.some(d => d.toLowerCase() === s.toLowerCase()));
+    }
+  }
+  // MDF is only valid under opaque paint; never suggest it for stain/translucent.
+  const isOpaquePaint = !!PAINT_RULES[finishName];
+  if (!isOpaquePaint) {
+    candidates = candidates.filter(s => s.toLowerCase() !== 'mdf');
+  }
+  return candidates;
+}
+
+// Formats the recommendation into a short, operator-friendly sentence to append
+// to a species×finish violation message. Offers BOTH axes: valid finishes for
+// the current species, and valid species for the current finish. Keeps each
+// list tight so the flag stays readable.
+function formatFinishRecommendation(doorStyle, species, requestedFinishName) {
+  const rec = recommendFinishesForSpecies(species, requestedFinishName);
+  const cap = (arr, n) => arr.slice(0, n);
+  const dsPart = doorStyle ? `${doorStyle} ` : '';
+  const parts = [];
+
+  // Axis 1 — keep species, shift finish
+  if (rec.sameCategory.length > 0) {
+    const list = cap(rec.sameCategory, 8).join(', ');
+    const more = rec.sameCategory.length > 8 ? ', …' : '';
+    parts.push(`Keeping ${dsPart}${species}, these ${rec.category} finishes are valid: ${list}${more}.`);
+  } else if (rec.others.length > 0) {
+    const list = cap(rec.others, 8).join(', ');
+    const more = rec.others.length > 8 ? ', …' : '';
+    parts.push(`Keeping ${dsPart}${species}, these finishes are valid: ${list}${more}.`);
+  }
+
+  // Axis 2 — keep finish, shift species (intersected with door-style options)
+  const speciesOpts = recommendSpeciesForFinish(doorStyle, requestedFinishName);
+  if (speciesOpts.length > 0) {
+    const list = cap(speciesOpts, 8).join(', ');
+    const more = speciesOpts.length > 8 ? ', …' : '';
+    if (speciesOpts.length === 1) {
+      parts.push(`Or keep ${requestedFinishName} and use ${list} — the only species valid for both${doorStyle ? ' ' + doorStyle : ''} and ${requestedFinishName}.`);
+    } else {
+      parts.push(`Or keep ${requestedFinishName} and switch species to: ${list}${more}.`);
+    }
+  }
+
+  return parts.length ? ' ' + parts.join(' ') : '';
 }
 
 function getFlagReasons(line) {
@@ -3522,7 +3723,31 @@ function getFlagReasons(line) {
     // Cross-field combination validation — door style × species × finish category
     const finishCat = inferFinishCategoryFromLine(line);
     const violation = validateDoorSpeciesFinish(line.doorStyle, line.species, finishCat, line.finishName);
-    if (violation) reasons.push(violation);
+    if (violation) {
+      // Append a deterministic recommendation so the operator has an actionable
+      // next step. formatFinishRecommendation offers BOTH axes: valid finishes
+      // for the current species, and valid species for the current finish
+      // (intersected with what the door style allows). We only append when the
+      // finish is a known catalog finish and we have a species to reason about.
+      let msg = violation;
+      const finishRuleExists = STAIN_RULES[line.finishName] || PAINT_RULES[line.finishName] || TRANSLUCENT_PAINT_RULES[line.finishName];
+      if (finishRuleExists && line.species) {
+        msg += formatFinishRecommendation(line.doorStyle, line.species, line.finishName);
+      }
+      reasons.push(msg);
+    } else if (!line.species && line.finishName &&
+               (STAIN_RULES[line.finishName] || PAINT_RULES[line.finishName] || TRANSLUCENT_PAINT_RULES[line.finishName])) {
+      // Species is blank (e.g. the MDF guard cleared an impossible combo like
+      // Maple+Dark) but the finish is known. Point the operator at the species
+      // that would make the dealer's finish valid on this door style — the
+      // missing-species flag above says WHAT is wrong; this says how to fix it.
+      const speciesOpts = recommendSpeciesForFinish(line.doorStyle, line.finishName);
+      if (speciesOpts.length === 1) {
+        reasons.push(`To keep ${line.finishName}, use ${speciesOpts[0]} — the only species valid for both ${line.doorStyle || 'this door'} and ${line.finishName}.`);
+      } else if (speciesOpts.length > 1) {
+        reasons.push(`To keep ${line.finishName}, pick a species valid for it on ${line.doorStyle || 'this door'}: ${speciesOpts.slice(0, 8).join(', ')}.`);
+      }
+    }
   }
 
   // CB (Color Block) validation — CBs have species + finish but no door style.
@@ -3545,7 +3770,11 @@ function getFlagReasons(line) {
     // species×finish rule (the door×species check is skipped when doorStyle is empty).
     const finishCat = inferFinishCategoryFromLine(line);
     const violation = validateDoorSpeciesFinish('', line.species, finishCat, line.finishName);
-    if (violation) reasons.push(violation);
+    if (violation) {
+      let msg = violation;
+      if (line.species) msg += formatFinishRecommendation('', line.species, line.finishName);
+      reasons.push(msg);
+    }
   }
   return reasons;
 }
@@ -4107,7 +4336,8 @@ document.getElementById('lineTableBody').addEventListener('change', (e) => {
 // would be lost when switching to another. Listeners are passive (no UI side
 // effects) so they're safe to call freely.
 ['hDate','hPO','hAlpha','hDesigner','hJob','hOrderType','hConstruction','hDelivery',
- 'bName','bPhone','bStreet','bCity','bState','bZip','bEmail'].forEach(id => {
+ 'bName','bPhone','bStreet','bCity','bState','bZip','bEmail',
+ 'sName','sPhone','sStreet','sCity','sState','sZip','sEmail'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('change', saveHeaderToActiveOrder);
@@ -5272,22 +5502,57 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
 
   y += 6;
 
-  // Invoice To block
+  // Invoice To + Ship To blocks, side by side. The dealer form has both; the
+  // split PDF now mirrors that. Ship To is populated from the extracted ship*
+  // fields when present; if the order carried no separate ship-to, it falls back
+  // to "Same as Invoice" so production isn't left guessing.
+  const HALF_W = (PAGE_W - 2*MARGIN) / 2;
   doc.setFont('helvetica','bold'); doc.setFontSize(8);
   doc.setFillColor(230,230,225);
-  doc.rect(MARGIN, y, PAGE_W - 2*MARGIN, 14, 'F');
+  doc.rect(MARGIN, y, HALF_W, 14, 'F');
+  doc.rect(MARGIN + HALF_W, y, HALF_W, 14, 'F');
+  doc.setTextColor(0,0,0);
   doc.text('INVOICE TO', MARGIN + 5, y + 10);
+  doc.text('SHIP TO', MARGIN + HALF_W + 5, y + 10);
   y += 14;
   doc.setFont('helvetica','normal'); doc.setFontSize(9);
+
   const billLine1 = document.getElementById('bName').value;
   const billLine2 = document.getElementById('bStreet').value;
   const billLine3 = `${document.getElementById('bCity').value} ${document.getElementById('bState').value} ${document.getElementById('bZip').value}`.trim();
   const billLine4 = `${document.getElementById('bPhone').value}  ${document.getElementById('bEmail').value}`.trim();
-  doc.rect(MARGIN, y, PAGE_W - 2*MARGIN, 48);
+
+  // Ship-to values (may be blank if the order had no separate ship-to)
+  const shipName = document.getElementById('sName') ? document.getElementById('sName').value : '';
+  const shipStreet = document.getElementById('sStreet') ? document.getElementById('sStreet').value : '';
+  const shipCityLine = document.getElementById('sCity')
+    ? `${document.getElementById('sCity').value}${document.getElementById('sState').value ? ', ' + document.getElementById('sState').value : ''} ${document.getElementById('sZip').value}`.trim()
+    : '';
+  const shipPhone = document.getElementById('sPhone') ? document.getElementById('sPhone').value : '';
+  const hasShip = (shipName || shipStreet || shipCityLine);
+
+  // Draw the two boxes
+  doc.rect(MARGIN, y, HALF_W, 48);
+  doc.rect(MARGIN + HALF_W, y, HALF_W, 48);
+
+  // Invoice To (left)
   doc.text(billLine1, MARGIN + 5, y + 11);
   doc.text(billLine2, MARGIN + 5, y + 23);
   doc.text(billLine3, MARGIN + 5, y + 35);
   doc.text(billLine4, MARGIN + 5, y + 45);
+
+  // Ship To (right) — stacked Name / Address / City, ST Zip per field request
+  const sx = MARGIN + HALF_W + 5;
+  if (hasShip) {
+    doc.text(shipName || '', sx, y + 11);
+    doc.text(shipStreet || '', sx, y + 23);
+    doc.text(shipCityLine || '', sx, y + 35);
+    if (shipPhone) doc.text(shipPhone, sx, y + 45);
+  } else {
+    doc.setFont('helvetica','italic'); doc.setTextColor(120,120,115);
+    doc.text('Same as Invoice', sx, y + 11);
+    doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
+  }
   y += 52;
 
   // Key specification block (Construction / Door Style / Species / Finish)
@@ -5434,13 +5699,29 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
     finishSpec = finishParts.join(' / ');
   }
 
+  // Fifth spec box (field request): a dedicated COLOR callout for visibility.
+  // If every line in this sub-order shares one finish color, show it big; if
+  // there's a mix, show "Various" so production knows to expect multiple colors.
+  // Uses the finish NAME (e.g. "Cappuccino", "Jade") since that's the actual
+  // color the dealer picked — distinct from the FINISH box which shows the
+  // category + glaze/process.
+  let colorSpec;
+  {
+    const colorLines = (group.lines || []).concat(group.cbLines || []);
+    const colorSet = [...new Set(colorLines.map(l => (l.finishName || '').trim()).filter(Boolean))];
+    if (colorSet.length === 1) colorSpec = colorSet[0];
+    else if (colorSet.length === 0) colorSpec = group.finishCategory || '—';
+    else colorSpec = `Various (${colorSet.length})`;
+  }
+
   const specs = [
     { label: 'CONSTRUCTION', value: 'Samples' },
     { label: 'DOOR STYLE', value: doorStyleSpec },
     { label: 'SPECIES', value: speciesSpec },
-    { label: 'FINISH', value: finishSpec }
+    { label: 'FINISH', value: finishSpec },
+    { label: 'COLOR', value: colorSpec }
   ];
-  const specW = (PAGE_W - 2*MARGIN) / 4;
+  const specW = (PAGE_W - 2*MARGIN) / specs.length;
   specs.forEach((s, i) => {
     const x = MARGIN + i * specW;
     doc.rect(x, y, specW, 36);
