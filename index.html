@@ -468,6 +468,33 @@
     font-family: 'Helvetica Neue', sans-serif;
     word-break: break-word;
   }
+  /* Full-width CHK reason row — sits directly beneath a flagged line so the
+     explanation is readable at normal size instead of crammed into the
+     narrow line-number column. */
+  .line-table tr.flag-row td {
+    background: #fdf4e3;
+    border-top: none;
+    border-left: 3px solid var(--warn);
+    padding: 7px 12px 8px 12px;
+    font-family: 'Helvetica Neue', sans-serif;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: #7a4a00;
+  }
+  .line-table tr.flag-row td .flag-row-label {
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 10px;
+    color: var(--warn);
+    margin-right: 8px;
+  }
+  .line-table tr.flag-row td .flag-row-src {
+    display: inline-block;
+    margin-left: 12px;
+    color: var(--muted);
+    font-size: 11px;
+  }
   .line-table .source-hint {
     font-size: 10px;
     color: var(--muted);
@@ -725,6 +752,19 @@
     </div>
 
     <div class="thumbs" id="thumbs"></div>
+
+    <!-- Per-file independent processing. Shown only when 2+ PDF/image files
+         are loaded. Off by default because a 2-page order photographed as two
+         images is a common case and must stay one order. -->
+    <div id="perFileBlock" class="hidden" style="margin:10px 0 4px; padding:10px 12px; border:1px solid var(--line,#ddd); background:#fafaf7;">
+      <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; font-size:13px;">
+        <input type="checkbox" id="perFileMode" style="margin-top:2px;" />
+        <span>
+          <strong>Each file is a separate order</strong> — process every file independently and in parallel.
+          <div class="small" style="color:var(--muted); margin-top:3px;">Use this when you've dropped several unrelated orders at once (each gets its own tab, its own PO, and its own PDFs). Leave it off when the files are pages of one order.</div>
+        </span>
+      </label>
+    </div>
 
     <!-- Paste-text alternative for rep emails and freeform lists -->
     <div class="paste-block" id="pasteBlock">
@@ -1660,6 +1700,12 @@ function updateExtractBtn() {
   const pastedText = getPastedText();
   const ok = state.files.length > 0 || pastedText.length > 0;
   extractBtn.disabled = !ok;
+  // Per-file mode only makes sense with 2+ AI-processed (non-Excel) files
+  const pfBlock = document.getElementById('perFileBlock');
+  if (pfBlock) {
+    const aiCount = state.files.filter(f => f.kind !== 'excel').length;
+    pfBlock.classList.toggle('hidden', aiCount < 2);
+  }
   if (!ok) {
     extractHint.textContent = 'Upload at least one file, or paste text, to continue.';
     return;
@@ -1712,18 +1758,34 @@ async function runExtraction() {
 
     // Parse Excel files first (free, fast, deterministic). All Excel files
     // merge into a single logical order since Excel forms are single-PO.
+    // Per-file mode (checkbox, 2+ AI files): every uploaded file is its own
+    // independent order. Decided up front so Excel handling can honor it too.
+    const perFileEl0 = document.getElementById('perFileMode');
+    const perFileModeEarly = !!(perFileEl0 && perFileEl0.checked && aiFiles.length > 1);
+    let excelStandalone = [];          // per-file mode: each Excel → own order
+
     if (excelFiles.length > 0) {
       setStatus(`Parsing ${excelFiles.length} Excel file(s)…`);
       setProgress(25);
       excelMerged = { header: {}, lineItems: [] };
       for (const f of excelFiles) {
         const parsed = await parseExcelOrderForm(f.file);
+        if (perFileModeEarly) {
+          excelStandalone.push({
+            label: f.name.replace(/\.[^.]+$/, ''),
+            header: parsed.header || {},
+            lineItems: parsed.lineItems || [],
+            _sourceFile: f.name
+          });
+          continue;
+        }
         // Merge: take first non-empty header value, append all line items
         for (const k of Object.keys(parsed.header)) {
           if (!excelMerged.header[k] && parsed.header[k]) excelMerged.header[k] = parsed.header[k];
         }
         excelMerged.lineItems.push(...parsed.lineItems);
       }
+      if (perFileModeEarly) excelMerged = null;  // nothing to merge in this mode
     }
 
     // For PDF/image files OR pasted text, hit the API. Pasted text is added
@@ -1747,28 +1809,80 @@ async function runExtraction() {
         showExtractError('Saved API key looks wrong — it should start with "sk-ant-". An admin will need to fix it.');
         return;
       }
-      const label = aiFiles.length > 0 && pastedText.length > 0 ? 'PDF/images + pasted text'
-                  : aiFiles.length > 0 ? 'PDF/images' : 'pasted text';
-      setStatus(`Sending ${label} to Claude API…`);
-      setProgress(50);
-      const aiResult = await callClaudeVision(key, aiFiles, pastedText, operatorInstructions);
-      console.log('[extract] AI returned:', aiResult);
+      // Normalizes any AI response into a logicalOrders array (handles the
+      // legacy single-order shape too).
+      const toLogicalOrders = (aiResult) => {
+        if (aiResult.logicalOrders && Array.isArray(aiResult.logicalOrders) && aiResult.logicalOrders.length > 0) {
+          return aiResult.logicalOrders;
+        }
+        if (aiResult.lineItems) {
+          return [{ label: '', header: aiResult.header || {}, lineItems: aiResult.lineItems }];
+        }
+        return [];
+      };
 
-      // The AI now returns { logicalOrders: [...] }. Backward-compat: if it
-      // returned the old single-order shape { header, lineItems }, wrap it in
-      // a one-element logicalOrders array so downstream code is uniform.
-      if (aiResult.logicalOrders && Array.isArray(aiResult.logicalOrders) && aiResult.logicalOrders.length > 0) {
-        aiLogicalOrders = aiResult.logicalOrders;
-      } else if (aiResult.lineItems) {
-        // Legacy shape
-        aiLogicalOrders = [{
-          label: '',
-          header: aiResult.header || {},
-          lineItems: aiResult.lineItems
-        }];
+      const perFileEl = document.getElementById('perFileMode');
+      const perFileMode = !!(perFileEl && perFileEl.checked && aiFiles.length > 1);
+
+      if (perFileMode) {
+        // ---- PER-FILE INDEPENDENT MODE ----
+        // One API call per file, all in parallel. Each file's result stands
+        // alone: a failure in one never takes down the others, and the AI
+        // never has to keep N unrelated orders straight in one context.
+        // Pasted text (if any) is processed as its own independent unit too.
+        const units = aiFiles.map(f => ({ kind: 'file', name: f.name, files: [f], text: '' }));
+        if (pastedText.length > 0) units.push({ kind: 'paste', name: 'Pasted text', files: [], text: pastedText });
+        let done = 0;
+        setStatus(`Processing ${units.length} orders independently (0 of ${units.length} done)…`);
+        setProgress(40);
+        const settled = await Promise.allSettled(units.map(async (u) => {
+          const r = await callClaudeVision(key, u.files, u.text, operatorInstructions);
+          done++;
+          setStatus(`Processing ${units.length} orders independently (${done} of ${units.length} done)…`);
+          setProgress(40 + Math.round(45 * done / units.length));
+          return r;
+        }));
+        const failed = [];
+        settled.forEach((res, idx) => {
+          const unit = units[idx];
+          if (res.status === 'fulfilled') {
+            const los = toLogicalOrders(res.value);
+            // Tag each resulting order with its source file so the tab label
+            // tells the operator exactly which upload it came from.
+            los.forEach((lo, j) => {
+              const base = unit.name.replace(/\.[^.]+$/, '');
+              lo.label = los.length > 1 ? `${base} (${j + 1})` : base;
+              lo._sourceFile = unit.name;
+            });
+            aiLogicalOrders.push(...los);
+            if (res.value && res.value._salvageWarning) {
+              salvageWarning = (salvageWarning ? salvageWarning + ' ' : '') + `[${unit.name}] ${res.value._salvageWarning}`;
+            }
+          } else {
+            console.error('[extract] per-file failure:', unit.name, res.reason);
+            failed.push(`${unit.name}: ${res.reason && res.reason.message ? res.reason.message : String(res.reason)}`);
+          }
+        });
+        if (failed.length) {
+          salvageWarning = (salvageWarning ? salvageWarning + ' ' : '') +
+            `${failed.length} file(s) could not be processed and were skipped — ${failed.join('; ')}. The other orders loaded normally; re-upload the failed file(s) separately.`;
+        }
+        console.log('[extract] per-file mode produced', aiLogicalOrders.length, 'logical orders;', failed.length, 'failures');
+      } else {
+        // ---- SINGLE-CALL MODE (default) ----
+        const label = aiFiles.length > 0 && pastedText.length > 0 ? 'PDF/images + pasted text'
+                    : aiFiles.length > 0 ? 'PDF/images' : 'pasted text';
+        setStatus(`Sending ${label} to Claude API…`);
+        setProgress(50);
+        const aiResult = await callClaudeVision(key, aiFiles, pastedText, operatorInstructions);
+        console.log('[extract] AI returned:', aiResult);
+        aiLogicalOrders = toLogicalOrders(aiResult);
+        if (aiResult._salvageWarning) salvageWarning = aiResult._salvageWarning;
       }
-      if (aiResult._salvageWarning) salvageWarning = aiResult._salvageWarning;
     }
+
+    // Per-file mode: standalone Excel orders join the AI orders as peers.
+    if (excelStandalone.length) aiLogicalOrders.push(...excelStandalone);
 
     // Build state.logicalOrders. Start fresh on each extraction.
     state.logicalOrders = [];
@@ -3858,6 +3972,22 @@ function updateFlagSummary() {
   }
 }
 
+// Builds the full-width explanation row that sits directly under a CHK-flagged
+// line. Spans every column of the line table (14) so the text has room to
+// breathe. Each flag reason gets its own line so multi-reason flags (e.g. an
+// invalid combo PLUS a recommendation) read as a short list, not a run-on.
+const LINE_TABLE_COLS = 14;
+function flagRowHtml(idx, reasonText, srcRef) {
+  const reasons = String(reasonText || '').split(' · ').filter(Boolean);
+  const body = reasons.length > 1
+    ? reasons.map(r => `<div>• ${escapeHtml(r)}</div>`).join('')
+    : escapeHtml(reasonText);
+  const src = srcRef
+    ? `<span class="flag-row-src" title="Look here in your original file">📄 ${escapeHtml(srcRef)}</span>`
+    : '';
+  return `<tr class="flag-row" data-flag-for="${idx}"><td colspan="${LINE_TABLE_COLS}"><span class="flag-row-label">Check</span>${body}${src}</td></tr>`;
+}
+
 function renderLineTable() {
   const body = document.getElementById('lineTableBody');
   const showFiltered = document.getElementById('showFiltered').checked;
@@ -3906,8 +4036,11 @@ function renderLineTable() {
     const reExamBadge = line.reExaminedNote
       ? `<span class="re-examined-badge" title="Re-examined with operator note: ${escapeHtml(line.reExaminedNote)}">re-examined</span>`
       : '';
+    // The # cell carries just the badge(s) and source hint. The reason text
+    // itself goes into a full-width row beneath the line (see flagRowHtml) so
+    // it's actually readable instead of being wrapped into a 30px column.
     const flagBadge = flagReasons.length
-      ? `<span class="flag-badge" title="${escapeHtml(reasonText)}">CHK</span>${reExamBadge}<div class="flag-reason">${escapeHtml(reasonText)}</div>${srcHint}`
+      ? `<span class="flag-badge" title="${escapeHtml(reasonText)}">CHK</span>${reExamBadge}${srcHint}`
       : (reExamBadge ? reExamBadge + srcHint : srcHint);
 
     const priceInfo = priceLine(line);
@@ -3947,6 +4080,9 @@ function renderLineTable() {
       </td>
     `;
     body.appendChild(tr);
+    if (flagReasons.length) {
+      body.insertAdjacentHTML('beforeend', flagRowHtml(i, reasonText, srcRef));
+    }
   });
 
   // wire up inputs
@@ -4178,17 +4314,33 @@ function onLineFieldChange(e) {
 
   if (wasFlagged !== nowFlag || nowFlag) {
     tr.classList.toggle('flagged', nowFlag);
-    const cell = tr.querySelector('td:first-child');
+    // Column 1 is the re-examine checkbox; the line-number cell is column 2.
+    // (This previously targeted td:first-child and clobbered the checkbox.)
+    const cell = tr.querySelector('td:nth-child(2)');
     const reasons = nowFlag ? getFlagReasons(line) : [];
     const reasonText = reasons.join(' · ');
     const srcRef = (line.sourceRef || '').trim();
     const srcHint = srcRef
       ? `<div class="source-hint" title="Look here in your original file">📄 ${escapeHtml(srcRef)}</div>`
       : '';
+    const reExamBadge = line.reExaminedNote
+      ? `<span class="re-examined-badge" title="Re-examined with operator note: ${escapeHtml(line.reExaminedNote)}">re-examined</span>`
+      : '';
     const badge = nowFlag
-      ? `<span class="flag-badge" title="${escapeHtml(reasonText)}">CHK</span><div class="flag-reason">${escapeHtml(reasonText)}</div>${srcHint}`
-      : srcHint;
-    cell.innerHTML = `${idx + 1}${badge ? '<br>' + badge : ''}`;
+      ? `<span class="flag-badge" title="${escapeHtml(reasonText)}">CHK</span>${reExamBadge}${srcHint}`
+      : (reExamBadge ? reExamBadge + srcHint : srcHint);
+    if (cell) cell.innerHTML = `${idx + 1}${badge ? '<br>' + badge : ''}`;
+
+    // Keep the full-width reason row in sync: update it, add it, or remove it.
+    const existing = tr.nextElementSibling;
+    const hasFlagRow = existing && existing.classList && existing.classList.contains('flag-row');
+    if (nowFlag) {
+      const html = flagRowHtml(idx, reasonText, srcRef);
+      if (hasFlagRow) existing.outerHTML = html;
+      else tr.insertAdjacentHTML('afterend', html);
+    } else if (hasFlagRow) {
+      existing.remove();
+    }
     updateFlagSummary();
   }
 }
@@ -5721,6 +5873,15 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
     { label: 'FINISH', value: finishSpec },
     { label: 'COLOR', value: colorSpec }
   ];
+  // Drawer front type is production-critical on front kits: a 5PC drawer
+  // front is built completely differently from a Slab. It already splits
+  // orders (an SFK group is all-Slab or all-5PC), but it was only shown as a
+  // small suffix in the banner. Give it its own box on SFK/FSFK orders.
+  if (group.skuType === 'SFK' || group.skuType === 'FSFK') {
+    const dfVal = (group.drawerFrontType || 'Slab').toUpperCase() === '5PC'
+      ? '5-Piece (5PC)' : 'Slab';
+    specs.push({ label: 'DRAWER FRONT', value: dfVal });
+  }
   const specW = (PAGE_W - 2*MARGIN) / specs.length;
   specs.forEach((s, i) => {
     const x = MARGIN + i * specW;
@@ -5845,6 +6006,7 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
       .filter(Boolean)
       .join(' / ');
     const isFsfkLine = (line.sku || '').toUpperCase() === 'FSFK';
+    const isSfkLine = (line.sku || '').toUpperCase() === 'SFK';
     let doorStyleCell = isFsfkLine && line.fsfkFrameType
       ? `${line.fsfkFrameType}-${line.doorStyle}`
       : line.doorStyle || '';
@@ -5852,6 +6014,12 @@ function renderFormIntoPdf(doc, group, orderNum, totalOrders, subOrderPO) {
       doorStyleCell = doorStyleCell
         ? `${doorStyleCell} ${line.doorStyleVariant}`
         : line.doorStyleVariant;
+    }
+    // Front kits: put the drawer front type on the line itself so 5PC is
+    // unmissable on every row, not just in the header.
+    if ((isSfkLine || isFsfkLine) && line.drawerFrontType) {
+      const df = String(line.drawerFrontType).toUpperCase() === '5PC' ? '5PC' : 'Slab';
+      doorStyleCell = doorStyleCell ? `${doorStyleCell} · ${df} DF` : `${df} DF`;
     }
     cols.forEach((c, ci) => {
       doc.rect(x, y, c.w, ROW_H);
