@@ -914,7 +914,7 @@
         <tbody id="lineTableBody"></tbody>
       </table>
     </div>
-    <div class="small" style="margin-top:6px">* = splitting field. SD, SFK, FSFK, and Parts each go on separate orders. Within SD/SFK/FSFK, unique combos of Species + Finish category + Glaze + Finish process split. SFK and FSFK additionally split by Drawer Front type (Slab vs 5PC). Atlantis, Aruba &amp; Salem (SD/SFK) get their own orders. Parts split into three buckets: Paint Color Blocks (CBBOX, CBSET, CBSET-M, CBSET-PNT), Stain Color Blocks (CBSET-C, CBSET-H, CBSET-O, CBSET-WO, CBSET-STN), and general Parts (LIT, TKIT, etc.). CB lines ride along on matching SD/SFK orders when species + finish + glaze + finish process all match. <strong>Drag the bottom scrollbar to see all columns.</strong></div>
+    <div class="small" style="margin-top:6px">* = splitting field. SD, SFK, FSFK, and Parts each go on separate orders. Within SD/SFK/FSFK, unique combos of Species + Finish category + Glaze + Finish process split. SFK and FSFK additionally split by Drawer Front type (Slab vs 5PC). Atlantis, Aruba, Easton, Lexington, Nassau &amp; Salem (SD/SFK/NDR) each get their own order. Parts split into three buckets: Paint Color Blocks (CBBOX, CBSET, CBSET-M, CBSET-PNT), Stain Color Blocks (CBSET-C, CBSET-H, CBSET-O, CBSET-WO, CBSET-STN), and general Parts (LIT, TKIT, etc.). CB lines ride along on matching SD/SFK orders when species + finish + glaze + finish process all match. <strong>Drag the bottom scrollbar to see all columns.</strong></div>
 
     <div style="margin-top:20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <button class="secondary" id="addLineBtn">+ Add Line</button>
@@ -1055,7 +1055,7 @@ const DISCONTINUED_FINISHES = {
 // the same species/finish/etc. Field feedback from production: these doors are
 // finicky enough that bundling them with others has caused mis-splits.
 // Easton is restricted-distribution and gets its own order for clean production tracking.
-const ISOLATION_DOOR_STYLES = ["Atlantis", "Aruba", "Easton", "Nassau", "Salem"];
+const ISOLATION_DOOR_STYLES = ["Atlantis", "Aruba", "Easton", "Lexington", "Nassau", "Salem"];  // Lexington added 2026-10-07 per field rule
 
 // Door styles that require species normalization: "Rift White Oak" -> "White Oak",
 // "Rift Red Oak" -> "Oak". These styles never use the rift designation.
