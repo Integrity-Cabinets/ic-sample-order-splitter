@@ -1006,7 +1006,7 @@
 // Front Kits) and live in ELITE_DOOR_STYLES below.
 const DOOR_STYLES = [
   "Aruba","Atlantic Breeze","Atlantis","Ayden","Bella","Bentley","Bentley SRP",
-  "Cumberland","Easton","Fairmont","Gulfbreeze","Hathaway","Hathaway SRP",
+  "Concord","Cumberland","Easton","Fairmont","Gulfbreeze","Hathaway","Hathaway SRP",
   "Jamestown","Lenoir","Lexington","Madison","Meridian","Meridian SRP",
   "Monterey","Nassau","Newcastle","Oxford","Oxford SRP","Salem",
   "Sedona","Shreveport","Southporte"
@@ -1089,6 +1089,7 @@ const DOOR_STYLE_ALIASES = {
 // (DOOR_STYLE_ALIASES) maps "Salem" → "Salem (Slab)" so lookups work either way.
 // Door styles not listed here have no validation rule and won't be flagged.
 const DOOR_STYLE_RULES = {
+  "Athena": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Alexandria": ['Oak', 'Maple', 'Cherry', 'Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Aruba": ['Maple', 'White Oak', 'MDF'],
   "Atlantic Breeze": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
@@ -1096,7 +1097,9 @@ const DOOR_STYLE_RULES = {
   "Ayden": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Bella": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Bentley": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
+  "Boulder": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Bentley SRP": ['Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
+  "Concord": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Cumberland": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   // Easton — restricted door only offered to a handful of customers. Per field
   // feedback: Maple and MDF only. Treated as an isolation style (its own order)
@@ -1121,6 +1124,7 @@ const DOOR_STYLE_RULES = {
   "Newton": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Oxford": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'MDF'],
   "Oxford SRP": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak'],
+  "Rockport": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Salem (Slab)": ['Maple', 'White Oak', 'MDF', 'Oak'],
   "Sanford": ['Oak', 'Maple', 'Cherry', 'Hickory', 'Knotty Hickory', 'White Oak', 'Rift White Oak', 'Rift Red Oak'],
   "Sedona": ['Maple'],
@@ -1380,7 +1384,10 @@ const SKU_TYPES = {
 
 const ELITE_DOOR_STYLES = [
   "Freeport","Highland","Kimberly","Newton","Sanford","Somerville","Vicksburg",
-  "Tripoli","Alexandria"
+  "Tripoli","Alexandria",
+  // Added 2026-10-23 — inset Elite styles available Jan 1, 2027. All species,
+  // S/B frames, Slab or 5PC drawer fronts, same as the other Elite styles.
+  "Boulder","Athena","Rockport"
 ];
 
 // Returns the list of valid door styles for a given SKU type.
