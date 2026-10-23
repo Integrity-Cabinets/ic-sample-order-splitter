@@ -14,6 +14,7 @@
 <title>Sample Order Splitter — Integrity Cabinets</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root {
     --ink: #0e0e0e;
@@ -747,8 +748,8 @@
 
     <div class="dropzone" id="dropzone">
       <div class="big">Drop files here or click to select</div>
-      <div class="small">Excel (.xlsx / .xlsm), PDF, PNG, JPG, HEIC accepted · multi-page and multi-file supported</div>
-      <input type="file" id="fileInput" accept="image/*,application/pdf,.pdf,.xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" multiple style="display:none" />
+      <div class="small">Excel (.xlsx / .xlsm), Word (.docx), PDF, PNG, JPG, HEIC accepted · multi-page and multi-file supported</div>
+      <input type="file" id="fileInput" accept="image/*,application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" multiple style="display:none" />
     </div>
 
     <div class="thumbs" id="thumbs"></div>
@@ -1639,7 +1640,24 @@ async function handleFiles(list) {
     const lower = file.name.toLowerCase();
     const isExcel = lower.endsWith('.xlsx') || lower.endsWith('.xlsm') ||
       file.type.includes('spreadsheet') || file.type.includes('excel');
-    if (!isImage && !isPdf && !isExcel) continue;
+    const isDocx = lower.endsWith('.docx') || file.type.includes('wordprocessingml');
+    if (!isImage && !isPdf && !isExcel && !isDocx) continue;
+
+    if (isDocx) {
+      // Word docs: the API can't read .docx natively, and dealers' Word
+      // orders are prose/numbered lists anyway (no form structure to parse),
+      // so extract the text in-browser and send it through the same
+      // free-text path the rep emails use. kind 'docx' counts as an AI file
+      // (per-file mode, re-examination) but is sent as text, not binary.
+      let text = '';
+      try { text = await extractDocxText(file); }
+      catch (err) { console.error('[docx] extract failed', file.name, err); }
+      state.files.push({
+        name: file.name, dataUrl: '', mediaType: 'text/plain', kind: 'docx',
+        file: null, text, textError: text ? '' : 'Could not read any text from this Word file.'
+      });
+      continue;
+    }
 
     const dataUrl = await readAsDataURL(file);
     state.files.push({
@@ -1663,6 +1681,59 @@ function readAsDataURL(file) {
   });
 }
 
+// Pull plain text out of a .docx: it's a zip whose word/document.xml holds
+// one <w:p> per paragraph and <w:t> runs for text. Paragraphs become lines;
+// tabs and soft breaks become spaces/newlines. Tables come out row-by-row
+// with cells separated by " | " so a tabular Word order still reads as rows.
+// Word's own auto-numbering (the "1." in a numbered list) lives in styling,
+// not text, so it's absent here — the AI treats each line as an item anyway.
+async function extractDocxText(file) {
+  if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
+  const zip = await JSZip.loadAsync(file);
+  const entry = zip.file('word/document.xml');
+  if (!entry) throw new Error('word/document.xml missing');
+  const xml = await entry.async('string');
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const body = doc.getElementsByTagNameNS(W, 'body')[0];
+  if (!body) return '';
+  const paraText = (p) => {
+    let s = '';
+    const walk = (n) => {
+      for (const ch of n.childNodes) {
+        if (ch.nodeType !== 1) continue;
+        const ln = ch.localName;
+        if (ln === 't') s += ch.textContent;
+        else if (ln === 'tab') s += ' ';
+        else if (ln === 'br' || ln === 'cr') s += '\n';
+        else walk(ch);
+      }
+    };
+    walk(p);
+    return s.replace(/[ \t]+/g, ' ').trim();
+  };
+  const lines = [];
+  const visit = (node) => {
+    for (const ch of node.childNodes) {
+      if (ch.nodeType !== 1) continue;
+      if (ch.localName === 'p') { const t = paraText(ch); if (t) lines.push(t); }
+      else if (ch.localName === 'tbl') {
+        for (const tr of ch.getElementsByTagNameNS(W, 'tr')) {
+          const cells = [];
+          for (const tc of tr.getElementsByTagNameNS(W, 'tc')) {
+            const parts = [];
+            for (const p of tc.getElementsByTagNameNS(W, 'p')) { const t = paraText(p); if (t) parts.push(t); }
+            cells.push(parts.join(' '));
+          }
+          if (cells.some(Boolean)) lines.push(cells.join(' | '));
+        }
+      } else visit(ch);
+    }
+  };
+  visit(body);
+  return lines.join('\n');
+}
+
 function renderThumbs() {
   thumbs.innerHTML = '';
   state.files.forEach((f, i) => {
@@ -1673,6 +1744,14 @@ function renderThumbs() {
         <div class="pdf-thumb">
           <div class="pdf-icon">PDF</div>
           <div class="pdf-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+        </div>
+        <button class="x" data-i="${i}" title="Remove">×</button>`;
+    } else if (f.kind === 'docx') {
+      const n = f.text ? f.text.split('\n').filter(Boolean).length : 0;
+      div.innerHTML = `
+        <div class="pdf-thumb" style="background:#2b579a;" title="${escapeHtml(f.textError || (n + ' line(s) of text extracted'))}">
+          <div class="pdf-icon" style="background:#fafaf7; color:#2b579a;">DOCX</div>
+          <div class="pdf-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}${f.textError ? ' ⚠' : ''}</div>
         </div>
         <button class="x" data-i="${i}" title="Remove">×</button>`;
     } else if (f.kind === 'excel') {
@@ -1716,9 +1795,10 @@ function updateExtractBtn() {
   if (counts.excel) parts.push(`${counts.excel} Excel`);
   if (counts.pdf) parts.push(`${counts.pdf} PDF`);
   if (counts.image) parts.push(`${counts.image} image${counts.image === 1 ? '' : 's'}`);
+  if (counts.docx) parts.push(`${counts.docx} Word doc${counts.docx === 1 ? '' : 's'}`);
   if (pastedText.length > 0) parts.push(`${pastedText.length.toLocaleString()} chars of pasted text`);
   let hint = parts.join(' + ') + ' ready.';
-  if (counts.excel > 0 && counts.pdf === 0 && counts.image === 0 && pastedText.length === 0) {
+  if (counts.excel > 0 && counts.pdf === 0 && counts.image === 0 && !counts.docx && pastedText.length === 0) {
     hint += ' Excel files parse locally — no API cost.';
   } else if (counts.excel > 0 || pastedText.length > 0) {
     hint += ' Excel parses locally; PDFs/images/pasted text use the API.';
@@ -1800,6 +1880,11 @@ async function runExtraction() {
     state.pastedTextSnapshot = pastedText;
     state.operatorInstructionsSnapshot = operatorInstructions;
     if (aiFiles.length > 0 || pastedText.length > 0) {
+      const emptyDocx = aiFiles.filter(f => f.kind === 'docx' && !(f.text && f.text.trim()));
+      if (emptyDocx.length) {
+        showExtractError(`No readable text in: ${emptyDocx.map(f => f.name).join(', ')}. If the order is a scanned image inside the Word file, save it as a PDF or export the image and upload that instead.`);
+        return;
+      }
       const key = (localStorage.getItem('ic_claude_key') || apiKeyInput.value || '').trim();
       if (!key) {
         showExtractError('No API key configured for non-Excel input. Click "admin" in the top box to set one up, or upload only Excel files.');
@@ -2652,8 +2737,12 @@ Applying a rule that is explicitly documented in these instructions means the va
 - Expand documented dealer shorthand (MPL, HKY, CHY, WO, KH, RO)
 These are settled business rules — the operator does not need to review them. Reserve "medium"/"low" and explanatory notes for genuine reading uncertainty: unclear handwriting, values that match nothing in the reference lists, or judgment calls these instructions don't cover. The notes field should describe UNCERTAINTY, not narrate rule applications.
 
-FREE-TEXT / PASTED INPUT (rep emails, plain-text sample lists):
-When the input includes a <pasted_text> block (usually a rep email or plain list), treat every non-empty line as potentially a line item. These inputs are terse and shorthand-heavy. Common patterns:
+FREE-TEXT / PASTED INPUT (rep emails, plain-text sample lists, Word documents):
+When the input includes a <pasted_text> or <word_document> block (a rep email, a plain list, or a dealer's Word doc), treat every non-empty line as potentially a line item. These inputs are terse and shorthand-heavy. Common patterns:
+
+- WORD ORDER OF THE PARTS VARIES. The three parts of a sample-door line — door style, finish, species — appear in ANY order: "Aruba Maple Cavern" (style species finish) and "Aruba Cavern Maple" (style finish species) are the same item. Never assign by position. Identify each word-group by matching it against DOOR_STYLES, then the finish lists, then the species list; whatever is left over is a modification note. Multi-word names must stay whole ("Atlantic Breeze", "Black Rub Thru", "Pacific Sand", "Knotty Hickory", "White Oak", "Red Oak").
+- A line with NO species (e.g. "Southporte Ivory") is still a line item — leave species empty and let the tool's rules fill or flag it (opaque paint with no species defaults to Maple).
+- LIST NUMBERS ARE NOT QUANTITIES. In a numbered list ("1. Aruba Admiral Blue MDF", "14. Madison Olive Maple") the number is the item's position — qty is 1. Treat a leading number as a quantity ONLY when it is written as a count: "2-", "2 -", "2x", "2 x", "(2)", or "qty 2". A list that counts 1, 2, 3… in order is numbering, not quantities.
 
 - "1-Aruba Maple Cavern" or "1 Aruba Maple Cavern" — qty 1, SD Aruba Maple w/ Cavern stain. The leading number is the QUANTITY; strip it. Default the SKU to "SD" when the line starts with a number and a door style. Extract door style, species, finish from the remaining words.
 - "3-SD Bella Maple Snow" — qty 3, SKU explicitly SD, Bella / Maple / Snow.
@@ -2742,6 +2831,21 @@ Output ONLY valid JSON. No markdown, no prose, no code fences. Exactly this stru
 
   const content = [];
   for (const f of files) {
+    if (f.kind === 'docx') {
+      // Word order: send its extracted text as a document block. Same rules
+      // as pasted rep emails apply (shorthand, "Style Finish Species" lines).
+      if (f.text && f.text.trim()) {
+        content.push({
+          type: "text",
+          text: `The following is the text of an uploaded Word document named "${f.name}" (a dealer's sample order written as a list or table). Extract line items and header info from it exactly as you would from pasted text. Lines are commonly written as "<door style> <finish> <species>" in any order — identify each part against the reference lists. A line's leading number is a list index, NOT a quantity, unless it is followed by a dash or an "x" (e.g. "2- Bella Maple Snow", "2x ...").
+
+<word_document name="${f.name}">
+${f.text.trim()}
+</word_document>`
+        });
+      }
+      continue;
+    }
     const base64 = f.dataUrl.split(',')[1];
     if (f.kind === 'pdf') {
       content.push({
