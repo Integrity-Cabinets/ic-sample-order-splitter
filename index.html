@@ -3267,6 +3267,32 @@ function normalizeLines(rawLines) {
     // we leave species blank (the line will then be flagged for review).
     let cbFinishType = (l.finishType || '').trim();
     let cbFinishName = (l.finishName || '').trim();
+    // CANONICALIZE the finish name's casing/whitespace to the catalog's
+    // exact spelling (2026-10-30). Every downstream check — the MDF guard,
+    // validateDoorSpeciesFinish, the recommender, the split key — uses
+    // exact string lookups (TRANSLUCENT_FINISHES.includes(name),
+    // TRANSLUCENT_PAINT_RULES[name]). When the AI returned "antique white"
+    // or "Mystic Beige " instead of the canonical form, all of those went
+    // silently blind at once: the guard left a bogus MDF in place and the
+    // validator raised no flag, so invalid combos reached the operator
+    // unflagged (review report 2026-10-30, lines 5 and 27). The fuzzy
+    // matcher below even recognized these as exact matches (it compares
+    // lowercase) and therefore declined to correct them. Snap here, once.
+    if (cbFinishName) {
+      const want = cbFinishName.trim().replace(/\s+/g, ' ').toLowerCase();
+      const canon = [...STAIN_FINISHES, ...PAINT_FINISHES, ...TRANSLUCENT_FINISHES]
+        .find(f => f.toLowerCase() === want);
+      if (canon) cbFinishName = canon;
+      else cbFinishName = cbFinishName.trim();
+    }
+    // Same for the category label, so "translucent paint" / "STAIN" match.
+    if (cbFinishType) {
+      const t = cbFinishType.trim().toLowerCase();
+      if (t.includes('translucent')) cbFinishType = 'Translucent Paint';
+      else if (t.includes('paint')) cbFinishType = 'Paint';
+      else if (t.includes('stain')) cbFinishType = 'Stain';
+    }
+
     if (sku === 'CB' && (!cbFinishName || !normalizedSpecies)) {
       // Strip the leading "CB " from the itemText so we just have the descriptor
       const desc = itemText.replace(/^\s*CB\s+/i, '').trim();
@@ -3460,9 +3486,33 @@ function normalizeLines(rawLines) {
             const restoredIsValid = !finishRule ||
               finishRule.some(s => s.toLowerCase() === (restored || '').toLowerCase());
             normalizedSpecies = restoredIsValid ? restored : '';
-          } else if (!dealerWroteMdf) {
-            // Nothing to restore — clear so it flags rather than ships bad MDF.
-            normalizedSpecies = '';
+          } else {
+            // Either the species field was blank, or it says "MDF" itself
+            // (the AI put MDF in the species field — review report
+            // 2026-10-30 line 5: dealer wrote "White Oak Antique White", AI
+            // returned species "MDF"). MDF is never valid on a stain or
+            // translucent no matter who wrote it, so "the dealer chose MDF"
+            // is not a reason to keep it. Recover the real species from the
+            // line's written text when it names one; otherwise clear so the
+            // line flags instead of shipping an impossible MDF.
+            const fromText = (() => {
+              const hay = `${itemText} ${l.modifications || ''}`.toLowerCase();
+              const order = ['Rift White Oak','Rift Red Oak','Knotty Hickory','White Oak','Red Oak','Maple','Cherry','Hickory','Oak'];
+              for (const s of order) {
+                if (new RegExp(`(^|[^a-z])${s.toLowerCase().replace(/\s+/g, '\\s+')}([^a-z]|$)`).test(hay)) return s === 'Red Oak' ? 'Oak' : s;
+              }
+              return '';
+            })();
+            if (fromText) {
+              const restored = normalizeSpeciesForLine(sku, doorStyle, fromText);
+              const finishNm = cbFinishName;
+              const finishRule = STAIN_RULES[finishNm] || PAINT_RULES[finishNm] ||
+                                 (typeof TRANSLUCENT_PAINT_RULES !== 'undefined' ? TRANSLUCENT_PAINT_RULES[finishNm] : null);
+              const ok = !finishRule || finishRule.some(s => s.toLowerCase() === (restored || '').toLowerCase());
+              normalizedSpecies = ok ? restored : '';
+            } else {
+              normalizedSpecies = '';
+            }
           }
         }
       }
